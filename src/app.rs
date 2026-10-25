@@ -941,7 +941,7 @@ impl FflowApp {
             .frame(
                 egui::Frame::none()
                     .fill(pal.panel)
-                    .inner_margin(egui::Margin::symmetric(10.0, 6.0)),
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
             )
             .show(ctx, |ui| {
                 let mut narrow = false;
@@ -1114,7 +1114,7 @@ impl FflowApp {
             .frame(
                 egui::Frame::none()
                     .fill(pal.panel)
-                    .inner_margin(egui::Margin::symmetric(8.0, 8.0)),
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
             )
             .show(ctx, |ui| {
                 self.panel_rects.library_content = ui.max_rect();
@@ -1133,7 +1133,7 @@ impl FflowApp {
                     .exact_height(self.settings.panels.files)
                     .frame(
                         egui::Frame::none()
-                            .inner_margin(egui::Margin { top: 6.0, ..egui::Margin::ZERO }),
+                            .inner_margin(egui::Margin { top: 8.0, ..egui::Margin::ZERO }),
                     )
                     .show_inside(ui, |ui| {
                         self.file_list(ui);
@@ -1213,32 +1213,40 @@ impl FflowApp {
                                     library_card_id(*kind),
                                     egui::Sense::click_and_drag(),
                                     |ui| {
+                                        // Two lines: title row, then the blurb
+                                        // on its own row. Side by side, the
+                                        // blurb was always the loser of the
+                                        // width fight and got clipped at the
+                                        // panel edge ("Colour…"). List rows
+                                        // use 2 px spacing, not the form 8 px.
+                                        ui.spacing_mut().item_spacing.y = 2.0;
                                         ui.horizontal(|ui| {
-                                            theme::accent_bar(
-                                                ui,
+                                            let (icon_rect, _) = ui.allocate_exact_size(
+                                                egui::vec2(16.0, 16.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            theme::icon(
+                                                ui.painter(),
+                                                icon_rect,
+                                                icon_for(*kind),
                                                 theme::node_color(*kind),
-                                                3.0,
-                                                16.0,
                                             );
-                                            ui.add_space(2.0);
+                                            ui.add_space(4.0);
                                             ui.label(
-                                                egui::RichText::new(format!(
-                                                    "{}  {}",
-                                                    icon_for(*kind),
-                                                    kind.title()
-                                                ))
-                                                .size(theme::BODY)
-                                                .color(pal.text),
-                                            );
-                                            ui.add(
-                                                egui::Label::new(
-                                                    egui::RichText::new(kind.blurb())
-                                                        .size(theme::CAPTION)
-                                                        .color(pal.faint),
-                                                )
-                                                .truncate(),
+                                                egui::RichText::new(kind.title())
+                                                    .size(theme::BODY)
+                                                    .strong()
+                                                    .color(pal.text),
                                             );
                                         });
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(kind.blurb())
+                                                    .size(theme::SMALL)
+                                                    .color(pal.faint),
+                                            )
+                                            .truncate(),
+                                        );
                                     },
                                 )
                                 .on_hover_text(format!(
@@ -1252,7 +1260,7 @@ impl FflowApp {
                                 if resp.drag_started() {
                                     self.drag_kind = Some(*kind);
                                 }
-                                ui.add_space(1.0);
+                                ui.add_space(4.0);
                             }
                         }
                     });
@@ -1270,7 +1278,6 @@ impl FflowApp {
     /// List of files the Source node resolves to, with whatever ffprobe knows.
     fn file_list(&mut self, ui: &mut egui::Ui) {
         let pal = theme::p();
-        ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("FILES")
@@ -1290,13 +1297,13 @@ impl FflowApp {
                 }
             });
         });
-        ui.add_space(2.0);
         if self.files.is_empty() {
             theme::empty_state(
                 ui,
-                "📁",
+                theme::Icon::Folder,
                 "No files yet",
-                "Pick a root folder to fill the queue",
+                "Point the Source node at a folder",
+                &[],
             );
             return;
         }
@@ -1370,7 +1377,6 @@ impl FflowApp {
                     if resp.clicked() {
                         pick = Some(i);
                     }
-                    ui.add_space(2.0);
                 }
             });
         theme::fade_bottom(ui, list.inner_rect, 16.0);
@@ -1387,7 +1393,7 @@ impl FflowApp {
             .frame(
                 egui::Frame::none()
                     .fill(pal.panel)
-                    .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
             )
             .show(ctx, |ui| {
                 ui.label(
@@ -1403,9 +1409,15 @@ impl FflowApp {
                     0 => {
                         theme::empty_state(
                             ui,
-                            "⚙",
+                            theme::Icon::Pointer,
                             "Nothing selected",
                             "Click a node on the canvas to edit it",
+                            &[
+                                ("click", "select / edit"),
+                                ("drag", "box-select many"),
+                                ("wheel", "zoom the canvas"),
+                                ("Del", "delete selection"),
+                            ],
                         );
                     }
                     1 => {
@@ -1420,18 +1432,18 @@ impl FflowApp {
                         // -- node header -----------------------------------
                         let mut delete_me = false;
                         ui.horizontal(|ui| {
-                            theme::accent_bar(ui, cat, 3.0, 34.0);
-                            ui.add_space(2.0);
+                            let (icon_rect, _) = ui.allocate_exact_size(
+                                egui::vec2(18.0, 18.0),
+                                egui::Sense::hover(),
+                            );
+                            theme::icon(ui.painter(), icon_rect, icon_for(kind), cat);
+                            ui.add_space(4.0);
                             ui.vertical(|ui| {
                                 ui.label(
-                                    egui::RichText::new(format!(
-                                        "{}  {}",
-                                        icon_for(kind),
-                                        kind.title()
-                                    ))
-                                    .size(theme::TITLE)
-                                    .strong()
-                                    .color(pal.text),
+                                    egui::RichText::new(kind.title())
+                                        .size(theme::TITLE)
+                                        .strong()
+                                        .color(pal.text),
                                 );
                                 ui.label(
                                     egui::RichText::new(kind.category().to_uppercase())
@@ -1542,9 +1554,10 @@ impl FflowApp {
                     n => {
                         theme::empty_state(
                             ui,
-                            "▣",
+                            theme::Icon::Layers,
                             &format!("{n} nodes selected"),
                             "Select a single node to edit its properties",
+                            &[],
                         );
                     }
                 }
@@ -1559,7 +1572,7 @@ impl FflowApp {
             .frame(
                 egui::Frame::none()
                     .fill(pal.panel)
-                    .inner_margin(egui::Margin::symmetric(10.0, 6.0)),
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
             )
             .show(ctx, |ui| {
                 let total = self.tasks.len();
@@ -1640,9 +1653,13 @@ impl FflowApp {
                 if total == 0 {
                     theme::empty_state(
                         ui,
-                        "▶",
+                        theme::Icon::Play,
                         "Nothing running",
-                        "Press Run to process every file found by the Source node",
+                        "Run compiles every file the Source node found",
+                        &[
+                            ("Run", "start the batch"),
+                            ("open", "reveal output"),
+                        ],
                     );
                     return;
                 }
@@ -1810,7 +1827,7 @@ impl FflowApp {
             .frame(
                 egui::Frame::none()
                     .fill(pal.panel)
-                    .inner_margin(egui::Margin::symmetric(10.0, 4.0)),
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -2181,29 +2198,38 @@ impl FflowApp {
             // the node body, which vanishes over a coloured title bar. A soft
             // disc behind it restores the affordance without patching the
             // dependency: we repaint disc + ✕ here, above the body.
+            let zoom = self.editor.pan_zoom.zoom;
             paint_close_buttons(
                 ui,
                 &self.editor.node_order,
                 &node_rects,
-                self.editor.pan_zoom.zoom,
+                zoom,
                 &pal,
             );
 
-            // Selection ring. The library paints its own outline in
-            // `Color32::WHITE.lighten(0.8)` behind the node, which is invisible on
-            // the light palette, so draw one in the accent colour instead.
+            // Category accent. Cards are deliberately neutral grey now; the
+            // only colour left is a 2 px top edge (and the icon in the library
+            // and inspector), which survives a zoomed-out view without turning
+            // the canvas into a pile of saturated blocks.
+            paint_node_accents(
+                ui,
+                &self.editor.graph,
+                &self.editor.node_order,
+                &node_rects,
+                zoom,
+            );
+
+            // Selection ring, in the accent colour: the library's own outline is
+            // `WHITE.lighten(0.8)`, invisible on the light palette.
             //
-            // The rect comes from the editor itself (`node_rects`) rather than
-            // from `memory[Id::new((node, "window"))]`: that one is the *hit*
-            // rect, which lags a frame and stops 14.5 px short of the card's
-            // rounded bottom cap. Guessing the gap with a constant is why the
-            // ring sat above or below the card depending on the node.
-            let zoom = self.editor.pan_zoom.zoom;
+            // The rect comes from the editor itself (`node_rects`), not from
+            // `memory[Id::new((node, "window"))]`: that one is the *hit* rect,
+            // lags a frame and stops short of the card's rounded bottom cap.
             for node in &self.editor.selected_nodes {
                 if let Some(r) = node_rects.get(node) {
                     ui.painter().rect_stroke(
                         r.expand(1.5 * zoom),
-                        egui::Rounding::same(6.0 * zoom),
+                        egui::Rounding::same(theme::ROUND_CARD * zoom),
                         egui::Stroke::new(1.5, pal.accent),
                     );
                 }
@@ -2360,6 +2386,7 @@ impl FflowApp {
     }
 
     fn toasts(&mut self, ctx: &egui::Context) {
+        let pal = theme::p();
         self.toasts
             .retain(|t| t.born.elapsed() < Duration::from_secs(6));
         if self.toasts.is_empty() {
@@ -2374,18 +2401,21 @@ impl FflowApp {
             .show(ctx, |ui| {
                 ui.set_max_width(520.0);
                 for t in &self.toasts {
-                    let color = if t.error {
-                        egui::Color32::from_rgb(70, 32, 32)
-                    } else {
-                        egui::Color32::from_rgb(32, 46, 60)
-                    };
+                    let color = if t.error { pal.err } else { pal.text };
                     egui::Frame::none()
-                        .fill(color)
+                        .fill(pal.surface)
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            if t.error { pal.err.gamma_multiply(0.5) } else { pal.hairline },
+                        ))
                         .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                        .rounding(4.0)
+                        .rounding(theme::ROUND_CARD)
                         .show(ui, |ui| {
                             ui.add(
-                                egui::Label::new(egui::RichText::new(&t.msg).small()).wrap(),
+                                egui::Label::new(
+                                    egui::RichText::new(&t.msg).size(theme::SMALL).color(color),
+                                )
+                                .wrap(),
                             );
                         });
                     ui.add_space(4.0);
@@ -2458,6 +2488,37 @@ impl eframe::App for FflowApp {
 /// drag ghost that follows the pointer).
 fn library_card_id(kind: NodeKind) -> egui::Id {
     egui::Id::new(("lib-card", kind.id()))
+}
+
+/// A 2 px category-coloured line along the top edge of every node card.
+///
+/// The cards themselves are neutral grey (the dependency no longer paints a
+/// saturated titlebar); this bar is all that is left of the old per-family
+/// colour, so the video and audio branches stay readable without turning the
+/// canvas into blocks of orange and green.
+fn paint_node_accents(
+    ui: &egui::Ui,
+    graph: &egui_node_graph2::Graph<graph::NodeData, graph::StreamType, graph::InlineValue>,
+    order: &[egui_node_graph2::NodeId],
+    rects: &std::collections::HashMap<egui_node_graph2::NodeId, egui::Rect>,
+    zoom: f32,
+) {
+    let painter = ui.painter();
+    for &node in order {
+        let Some(card) = rects.get(&node) else {
+            continue;
+        };
+        let color = theme::node_color(graph.nodes[node].user_data.kind());
+        // Inset by the card's corner radius so the line follows the top edge
+        // instead of poking out of the rounded corners.
+        let inset = 4.0 * zoom;
+        let h = (2.0 * zoom).max(1.5);
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(card.left() + inset, card.top()),
+            egui::pos2(card.right() - inset, card.top() + h),
+        );
+        painter.rect_filled(bar, egui::Rounding::same(h * 0.5), theme::alpha(color, 210));
+    }
 }
 
 /// Soft disc + ✕ on top of each node, replacing the bare strokes the
@@ -2563,31 +2624,32 @@ fn file_card_id(index: usize) -> egui::Id {
     egui::Id::new(("file-card", index))
 }
 
-fn icon_for(kind: NodeKind) -> &'static str {
+fn icon_for(kind: NodeKind) -> theme::Icon {
+    use theme::Icon;
     match kind {
-        NodeKind::Source => "📁",
-        NodeKind::Demux => "🔀",
-        NodeKind::Scale => "🖼",
-        NodeKind::Pad => "▣",
-        NodeKind::Crop => "✂",
-        NodeKind::Rotate => "🔄",
-        NodeKind::Fps => "⏱",
-        NodeKind::Color => "🎨",
-        NodeKind::Lut => "🌈",
-        NodeKind::Sharpen => "🔍",
-        NodeKind::Denoise => "☁",
-        NodeKind::Overlay => "📌",
-        NodeKind::Volume => "🔉",
-        NodeKind::Loudness => "📈",
-        NodeKind::Band => "📉",
-        NodeKind::Tempo => "⏩",
-        NodeKind::Channels => "🎧",
-        NodeKind::Resample => "📊",
-        NodeKind::RawFilter => "✏",
-        NodeKind::Condition => "⚖",
-        NodeKind::VideoEncoder => "🎥",
-        NodeKind::AudioEncoder => "🔊",
-        NodeKind::Package => "📦",
+        NodeKind::Source => Icon::Folder,
+        NodeKind::Demux => Icon::Split,
+        NodeKind::Scale => Icon::Resize,
+        NodeKind::Pad => Icon::Frame,
+        NodeKind::Crop => Icon::Crop,
+        NodeKind::Rotate => Icon::Rotate,
+        NodeKind::Fps => Icon::Clock,
+        NodeKind::Color => Icon::Sliders,
+        NodeKind::Lut => Icon::Layers,
+        NodeKind::Sharpen => Icon::Sparkle,
+        NodeKind::Denoise => Icon::Cloud,
+        NodeKind::Overlay => Icon::Pin,
+        NodeKind::Volume => Icon::Speaker,
+        NodeKind::Loudness => Icon::Wave,
+        NodeKind::Band => Icon::Funnel,
+        NodeKind::Tempo => Icon::Gauge,
+        NodeKind::Channels => Icon::Headphones,
+        NodeKind::Resample => Icon::Steps,
+        NodeKind::RawFilter => Icon::Code,
+        NodeKind::Condition => Icon::Branch,
+        NodeKind::VideoEncoder => Icon::Camera,
+        NodeKind::AudioEncoder => Icon::Music,
+        NodeKind::Package => Icon::Package,
     }
 }
 
@@ -2651,16 +2713,12 @@ fn check_tools() -> Option<String> {
 /// canvas and scale with the zoom, not to align to graph coordinates.
 fn paint_grid(ui: &egui::Ui, rect: egui::Rect, pan: egui::Vec2, zoom: f32) {
     let pal = theme::p();
-    let step = 26.0 * zoom;
+    let step = 24.0 * zoom;
     if step < 8.0 {
         return;
     }
-    let dot = egui::Color32::from_rgba_unmultiplied(
-        pal.stroke.r(),
-        pal.stroke.g(),
-        pal.stroke.b(),
-        110,
-    );
+    // Faint enough to sit *under* the cards rather than compete with them.
+    let dot = theme::alpha(pal.stroke, 90);
     let painter = ui.painter();
     let ox = pan.x.rem_euclid(step);
     let oy = pan.y.rem_euclid(step);
@@ -2668,7 +2726,7 @@ fn paint_grid(ui: &egui::Ui, rect: egui::Rect, pan: egui::Vec2, zoom: f32) {
     while y < rect.bottom() {
         let mut x = rect.left() + ox;
         while x < rect.right() {
-            painter.circle_filled(egui::pos2(x, y), 0.9, dot);
+            painter.circle_filled(egui::pos2(x, y), 1.0, dot);
             x += step;
         }
         y += step;
@@ -2676,25 +2734,31 @@ fn paint_grid(ui: &egui::Ui, rect: egui::Rect, pan: egui::Vec2, zoom: f32) {
 }
 
 /// Colour one argv token in the command preview.
+///
+/// Every branch uses a dedicated `code_*` palette colour instead of the port
+/// colours: on the near-black code well the old dark blue and dark teal sat
+/// around 3:1 and were barely legible. These clear 4.5:1 in both themes.
 fn command_token_color(arg: &str, prev: Option<&str>, is_last: bool) -> egui::Color32 {
     let pal = theme::p();
     if is_last {
-        return pal.ok; // output path
+        return pal.code_output; // output path
     }
     if arg.starts_with('-') {
-        return pal.accent; // option name
+        return pal.code_flag; // option name
     }
     if matches!(
         prev,
-        Some("-c:v" | "-c:a" | "-c:s" | "-vcodec" | "-acodec" | "-preset" | "-pix_fmt" | "-f" | "-rc")
+        Some(
+            "-c:v" | "-c:a" | "-c:s" | "-vcodec" | "-acodec" | "-preset" | "-pix_fmt" | "-f" | "-rc"
+        )
     ) {
-        return pal.video; // codec / container / encoder option value
+        return pal.code_value; // codec / container / encoder option value
     }
     if arg.starts_with('[') || arg.contains("]=") {
-        return theme::category_color("Filters"); // filter graph expression
+        return pal.code_filter; // filter graph expression
     }
     if arg.contains('/') || arg.contains('\\') {
-        return pal.file; // a path
+        return pal.code_path; // a path
     }
     pal.dim
 }
@@ -2779,29 +2843,76 @@ fn reveal_in_explorer(dir: &std::path::Path) {
 }
 
 pub(crate) fn install_fonts(ctx: &egui::Context) {
-    // egui's built-in fonts have no CJK glyphs; borrow one from the system so
-    // that non-ASCII file names are readable.
-    let candidates = [
+    // Prefer a real UI/mono pair (Inter + JetBrains Mono, then the platform's
+    // own faces) and fall back to egui's bundled Ubuntu/Hack. CJK is appended
+    // as a *fallback* so non-ASCII file names still render.
+    let mut fonts = egui::FontDefinitions::default();
+    let mut load = |name: &str, paths: &[&str]| -> bool {
+        for path in paths {
+            if let Ok(bytes) = std::fs::read(path) {
+                fonts
+                    .font_data
+                    .insert(name.to_owned(), egui::FontData::from_owned(bytes));
+                return true;
+            }
+        }
+        false
+    };
+
+    let ui_font = load(
+        "fflow-ui",
+        &[
+            "C:/Windows/Fonts/inter.ttf",
+            "C:/Windows/Fonts/Inter-Regular.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+            "/System/Library/Fonts/SFNS.ttf",
+            "/Library/Fonts/Inter-Regular.otf",
+            "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ],
+    );
+    let mono_font = load(
+        "fflow-mono",
+        &[
+            "C:/Windows/Fonts/JetBrainsMono-Regular.ttf",
+            "C:/Windows/Fonts/consola.ttf",
+            "C:/Windows/Fonts/CascadiaMono.ttf",
+            "/Library/Fonts/JetBrainsMono-Regular.ttf",
+            "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        ],
+    );
+
+    let cjk = [
         "C:/Windows/Fonts/simhei.ttf",
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/simsun.ttc",
         "/System/Library/Fonts/PingFang.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    ];
-    for path in candidates {
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
-        let mut fonts = egui::FontDefinitions::default();
+    ]
+    .iter()
+    .find(|path| std::path::Path::new(path).exists())
+    .and_then(|path| std::fs::read(path).ok());
+    if let Some(bytes) = cjk {
         fonts
             .font_data
             .insert("cjk".to_owned(), egui::FontData::from_owned(bytes));
-        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            fonts.families.entry(family).or_default().push("cjk".to_owned());
-        }
-        ctx.set_fonts(fonts);
-        return;
     }
+
+    let families: [(&egui::FontFamily, Option<&str>); 2] = [
+        (&egui::FontFamily::Proportional, ui_font.then_some("fflow-ui")),
+        (&egui::FontFamily::Monospace, mono_font.then_some("fflow-mono")),
+    ];
+    for (family, preferred) in families {
+        let list = fonts.families.entry(family.clone()).or_default();
+        if let Some(name) = preferred {
+            list.insert(0, name.to_owned());
+        }
+        if fonts.font_data.contains_key("cjk") {
+            list.push("cjk".to_owned());
+        }
+    }
+    ctx.set_fonts(fonts);
 }
 
 #[cfg(test)]
@@ -3707,13 +3818,13 @@ mod tests {
 mod glyph_tests {
     use super::*;
 
-    /// Symbols used in UI text (not painted, not icon-font-only).
-    const SYMBOLS: &str = "·×—•…»›↻■▣▶◀⚠⚡";
+    /// Symbols used in UI text (icons are painted as vectors, not glyphs).
+    const SYMBOLS: &str = "·×—•…»›↻■▶◀⚠⚡";
 
-    /// egui bundles Ubuntu-Light plus a monochrome NotoEmoji and nothing else:
-    /// any other code point renders as a tofu box. That bit us with `◐`, `→`,
-    /// `●`, `✕`, `▸`, `⑂` and `🎛`, all of which showed up as empty squares.
-    /// Keep this list in sync with the labels.
+    /// egui bundles Ubuntu-Light plus a monochrome NotoEmoji. Any other code
+    /// point renders as a tofu box, which is why every node icon is drawn with
+    /// [`theme::Icon`] instead of an emoji. This guards the remaining symbol
+    /// text.
     #[test]
     fn every_ui_glyph_renders() {
         let ctx = egui::Context::default();
@@ -3733,9 +3844,6 @@ mod glyph_tests {
                 }
             };
             check(SYMBOLS);
-            for kind in NodeKind::ALL {
-                check(icon_for(kind));
-            }
             assert!(missing.is_empty(), "missing glyphs: {missing:?}");
         });
     }

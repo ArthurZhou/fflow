@@ -608,21 +608,28 @@ fn draw_connection(
 /// The bezier for one connection, as a shape the caller can put wherever it
 /// wants in the paint order (see the wire placeholder in the editor).
 fn connection_shape(pan_zoom: &PanZoom, src_pos: Pos2, dst_pos: Pos2, color: Color32) -> Shape {
-    let connection_stroke = egui::Stroke {
-        width: 5.0 * pan_zoom.zoom,
-        color,
-    };
-
+    // fflow patch: the stock 5 px opaque line reads as a hand-drawn marker.
+    // Three stacked beziers — a wide low-alpha glow, a mid halo, and a 2 px
+    // core — give a thin luminous "data flow" that stays legible at any zoom
+    // without the saturated slab.
     let control_scale = ((dst_pos.x - src_pos.x) * pan_zoom.zoom / 2.0).max(30.0 * pan_zoom.zoom);
     let src_control = src_pos + Vec2::X * control_scale;
     let dst_control = dst_pos - Vec2::X * control_scale;
-
-    Shape::CubicBezier(CubicBezierShape::from_points_stroke(
-        [src_pos, src_control, dst_control, dst_pos],
-        false,
-        Color32::TRANSPARENT,
-        connection_stroke,
-    ))
+    let bez = |width: f32, tint: Color32| {
+        Shape::CubicBezier(CubicBezierShape::from_points_stroke(
+            [src_pos, src_control, dst_control, dst_pos],
+            false,
+            Color32::TRANSPARENT,
+            egui::Stroke { width, color: tint },
+        ))
+    };
+    let core = (2.0 * pan_zoom.zoom).max(1.25);
+    let glow = |a: u8| Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a);
+    Shape::Vec(vec![
+        bez(core * 4.0, glow(14)),
+        bez(core * 2.2, glow(40)),
+        bez(core, glow(230)),
+    ])
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1108,7 +1115,8 @@ where
         // does not support drawing rectangles with asymmetrical round corners.
 
         let (shape, outline) = {
-            let rounding_radius = 4.0 * pan_zoom.zoom;
+            // fflow patch: 8 px, matching the app's card radius (`theme::ROUND_CARD`).
+            let rounding_radius = 8.0 * pan_zoom.zoom;
             let rounding = Rounding::same(rounding_radius);
 
             let titlebar_height = title_height + margin.y;
@@ -1156,13 +1164,10 @@ where
             });
 
             let node_rect = titlebar_rect.union(body_rect).union(bottom_body_rect);
-            // fflow patch: a hairline around the whole card. Without it a card
-            // is a flat white/grey slab and its edge disappears into the panel
-            // fill. The app's theme sets `noninteractive.bg_stroke` to NONE (no
-            // boxes around labels), so this uses the *idle control* stroke,
-            // which is the palette's hairline and is already zoom-scaled by
-            // `Style::scale` — 1 px at every zoom.
-            let border_stroke = ui.visuals().widgets.inactive.bg_stroke;
+            // fflow patch: the card hairline. `window_stroke` is the theme's
+            // 1 px translucent border, shared with dialogs so both read as
+            // elevated surfaces.
+            let border_stroke = ui.visuals().window_stroke;
             let border = Shape::Rect(RectShape {
                 rect: node_rect,
                 rounding,
@@ -1189,7 +1194,34 @@ where
             // Take note of the node rect, so the editor can use it later to compute intersections.
             self.node_rects.insert(self.node_id, node_rect);
 
-            (Shape::Vec(vec![titlebar, body, bottom_body, border]), outline)
+            // fflow patch: a soft drop shadow so cards float above the dot
+            // grid. egui has no blur, so it is a stack of rounded rects that
+            // grow and fade; five layers is enough to hide the banding at
+            // these sizes. Paint order: shadow → titlebar → body → cap → border.
+            let mut shapes: Vec<Shape> = Vec::with_capacity(9);
+            if ui.visuals().dark_mode {
+                let offset = 6.0 * pan_zoom.zoom;
+                for i in (0..5).rev() {
+                    let t = i as f32 / 5.0;
+                    let grow = (1.0 + t * 8.0) * pan_zoom.zoom;
+                    let alpha = (110.0 * (1.0 - t)).round() as u8;
+                    shapes.push(Shape::Rect(RectShape {
+                        rect: node_rect.translate(vec2(0.0, offset)).expand(grow),
+                        rounding,
+                        fill: Color32::from_black_alpha(alpha),
+                        stroke: Stroke::NONE,
+                        blur_width: 0.0,
+                        fill_texture_id: Default::default(),
+                        uv: Rect::ZERO,
+                    }));
+                }
+            }
+            shapes.push(titlebar);
+            shapes.push(body);
+            shapes.push(bottom_body);
+            shapes.push(border);
+
+            (Shape::Vec(shapes), outline)
         };
 
         ui.painter().set(background_shape, shape);

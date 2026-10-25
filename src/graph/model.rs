@@ -123,7 +123,7 @@ impl Default for PanelSizes {
             inspector: 360.0,
             tasks: 196.0,
             preview: 150.0,
-            files: 110.0,
+            files: 128.0,
         }
     }
 }

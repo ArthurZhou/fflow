@@ -29,12 +29,7 @@ pub use nodes::{NodeConfig, NodeKind};
 
 impl DataTypeTrait<GraphCtx> for StreamType {
     fn data_type_color(&self, _user_state: &mut GraphCtx) -> egui::Color32 {
-        match self {
-            StreamType::File => egui::Color32::from_rgb(120, 170, 240),
-            StreamType::Video => egui::Color32::from_rgb(240, 150, 70),
-            StreamType::Audio => egui::Color32::from_rgb(90, 200, 140),
-            StreamType::Any => egui::Color32::from_rgb(226, 168, 80),
-        }
+        crate::theme::port_color(*self)
     }
 
     fn name(&self) -> Cow<'_, str> {
@@ -276,7 +271,7 @@ impl NodeDataTrait for NodeData {
                             .color(egui::Color32::from_rgb(140, 200, 255)),
                     );
                 }
-                if ui.small_button("probe").clicked() {
+                if crate::theme::mini_button(ui, "probe").clicked() {
                     responses.push(NodeResponse::User(FlowResponse::ProbeSource(self.json_id)));
                 }
             }
@@ -381,18 +376,17 @@ impl NodeDataTrait for NodeData {
         _graph: &Graph<Self, Self::DataType, Self::ValueType>,
         _user_state: &mut Self::UserState,
     ) -> Option<egui::Color32> {
-        // Title bars carry the node's media colour (video orange / audio green),
-        // so the two branches of the pipeline are distinguishable at a glance.
-        //
-        // The library picks the title text colour from the theme (#fefefe when
-        // dark, #505050 when light), so the fill has to be dark in dark mode and
-        // pale in light mode. `mix` keeps it opaque — see its docs for why
-        // `gamma_multiply` is the wrong tool here.
+        // The card is deliberately neutral grey; the family colour survives in
+        // the app's 2 px top accent and in the library/inspector icon. A tint
+        // of 8–10% here is just enough to separate a video card from an audio
+        // one when they sit side by side, and it keeps the title text (which
+        // the library paints in the theme's text colour) readable.
         let cat = crate::theme::node_color(self.kind());
-        Some(if crate::theme::p().bg.r() < 0x80 {
-            crate::theme::mix(cat, egui::Color32::BLACK, 0.58)
+        let pal = crate::theme::p();
+        Some(if crate::theme::is_dark() {
+            crate::theme::mix(pal.card_top, cat, 0.10)
         } else {
-            crate::theme::mix(cat, egui::Color32::WHITE, 0.72)
+            crate::theme::mix(pal.card_top, cat, 0.06)
         })
     }
 }
