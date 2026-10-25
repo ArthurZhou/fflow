@@ -203,6 +203,16 @@ pub const BUTTON_H: f32 = 28.0;
 /// Gutter between a form's label and its control.
 pub const LABEL_W: f32 = 92.0;
 
+/// Scale factor of the `Ui` currently being laid out.
+///
+/// `egui_node_graph2` zooms by swapping in a `Style::scaled(zoom)`; widgets
+/// that paint by hand (node buttons, for example) run in screen pixels and
+/// must read the factor back out of the style instead of assuming 1.0.
+pub fn ui_zoom(ui: &egui::Ui) -> f32 {
+    let body = egui::TextStyle::Body.resolve(ui.style()).size;
+    (body / BODY).clamp(0.1, 8.0)
+}
+
 // ---------------------------------------------------------------------------
 // Type scale
 // ---------------------------------------------------------------------------
@@ -845,18 +855,26 @@ pub fn ghost_button(ui: &mut egui::Ui, text: impl Into<String>) -> Response {
 pub fn mini_button(ui: &mut egui::Ui, text: impl Into<String>) -> Response {
     let p = p();
     let text = text.into();
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text, FontId::proportional(CAPTION), p.dim);
-    let size = Vec2::new(galley.size().x + 12.0, 18.0);
+    // This runs inside a zoomed node card, so every metric has to follow the
+    // style scale. With a fixed 18 px height the button kept its full size at
+    // 40% zoom and dominated the card, forcing the card to reflow around it.
+    let zoom = ui_zoom(ui);
+    let galley = ui.painter().layout_no_wrap(
+        text,
+        FontId::proportional((CAPTION * zoom).max(1.0)),
+        p.dim,
+    );
+    let size = Vec2::new(galley.size().x + 12.0 * zoom, 18.0 * zoom);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     if ui.is_rect_visible(rect) {
+        let stroke_w = zoom.max(0.5);
         let (fill, stroke) = if resp.hovered() {
-            (p.surface_hi, Stroke::new(1.0, p.stroke))
+            (p.surface_hi, Stroke::new(stroke_w, p.stroke))
         } else {
-            (p.surface, Stroke::new(1.0, p.hairline))
+            (p.surface, Stroke::new(stroke_w, p.hairline))
         };
-        ui.painter().rect(rect, Rounding::same(4.0), fill, stroke);
+        ui.painter()
+            .rect(rect, Rounding::same((4.0 * zoom).max(1.0)), fill, stroke);
         ui.painter()
             .galley(rect.center() - galley.size() * 0.5, galley, p.dim);
     }

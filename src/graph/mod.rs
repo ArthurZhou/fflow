@@ -177,8 +177,7 @@ impl NodeTemplateTrait for NodeTemplate {
 /// frame behind, which is exactly how a zoomed card ends up with a stale
 /// width — so read the scale back out of the style that is actually in use.
 fn style_zoom(ui: &egui::Ui) -> f32 {
-    let body = egui::TextStyle::Body.resolve(ui.style()).size;
-    (body / crate::theme::BODY).clamp(0.1, 8.0)
+    crate::theme::ui_zoom(ui)
 }
 
 /// Draw a port label against the right edge of the node body.

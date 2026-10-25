@@ -40,7 +40,7 @@ $env:FFLOW_FFPROBE = "D:\tools\ffprobe.exe"
 
 ```powershell
 cargo run --release          # 启动 GUI
-cargo test                   # 82 个测试
+cargo test                   # 83 个测试
 cargo build --release        # 产物：target\release\fflow.exe
 ```
 
@@ -209,15 +209,19 @@ src/
 `egui_node_graph2` 0.7 是 crates.io 上唯一的版本，且已停止更新。为了让节点的缩放、连线和卡片外观符合上面这套规范，仓库内置了它的源码副本并在 `Cargo.toml` 里用 `[patch.crates-io]` 指向它。每处改动都以 `fflow patch:` 注释标记，集中在 `editor_ui.rs`：
 
 - 卡片边距缩放、内边距与行距按 zoom 缩放（修掉缩小时卡片被撑高的老 bug）
+- 滚轮缩放读取原始 delta，而不是平滑后的尾部，避免停下后继续微缩放导致文字抖动
+- 关闭按钮的 ✕ 描边随 zoom 缩放，不再在小卡片上显得又粗又大
 - 卡片使用主题色 `faint_bg_color` / `text_color`，而不是硬编码的 `#3f3f3f`
 - 连接线改为三层贝塞尔（低透明度辉光 + 2 px 亮芯），并画在卡片下方
 - 卡片 8 px 圆角、主题发丝描边、柔和投影
 - 卡片矩形通过 `GraphResponse::node_rects` 暴露给应用（选中环、重绘的关闭按钮都依赖它）
 - 移除右键弹出的 node finder（左侧库已经覆盖该功能）
 
+节点内的 `probe` 按钮由 `theme::mini_button` 绘制，尺寸、字号、圆角和描边都会跟随 `theme::ui_zoom`，不会再在缩小时保持固定像素尺寸。
+
 ### 已知限制
 
-- **缩小画布时卡片会变高**：依赖内部用未缩放的 `port_height` 与已缩放的文字行高比较，差值被当成 padding 加进去。这是上游算法问题，`vendor` 里只修了缩放系数，节点越多越明显；`zoom_keeps_card_width_stable` 只保证宽度不漂移。
+- 画布缩放到 35% 以下时，节点正文只有几个像素高，文字不再具备可读性；需要看清内容时请放大。
 - **滚动区域最后一行的渐隐**是手绘网格渐变，不是真正的模糊。
 - 画布点阵随缩放变化密度，不严格对齐图坐标。
 
@@ -226,7 +230,7 @@ src/
 ## 验证
 
 ```powershell
-cargo test                                  # 82 个单元 + 无头 UI 测试
+cargo test                                  # 83 个单元 + 无头 UI 测试
 cargo run -- --selftest testdata            # 真实调用 ffmpeg 的端到端检查
 cargo run -- --screenshot out.ppm           # 整窗离屏渲染
 ```

@@ -149,9 +149,16 @@ where
             self.pan_zoom.started = true;
         }
 
-        // Zoom only within area where graph is shown
+        // Zoom only within area where graph is shown.
+        //
+        // fflow patch: use the *raw* wheel delta. `smooth_scroll_delta` keeps
+        // feeding the graph for several frames after the wheel stops, and each
+        // of those frames re-rasterises every glyph at a slightly different
+        // size — the text visibly shivers until the smoothing tail runs out.
+        // A wheel notch is one zoom step; a trackpad already sends a stream of
+        // small deltas, so it stays smooth without egui's extra decay.
         if ui.rect_contains_pointer(clip_rect) {
-            let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
+            let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
             if scroll_delta != 0.0 {
                 let zoom_delta = (scroll_delta * 0.002).exp();
                 self.zoom(ui, zoom_delta);
@@ -1266,7 +1273,10 @@ where
         // Measurements
         let margin = 8.0 * pan_zoom.zoom;
         let size = 10.0 * pan_zoom.zoom;
-        let stroke_width = 2.0;
+        // fflow patch: scale the stroke too. A fixed 2 px cross is heavier than
+        // the 4 px glyph it is drawn on at 40% zoom, which made the close
+        // affordance read as a giant, chunky ✕ on a tiny card.
+        let stroke_width = (2.0 * pan_zoom.zoom).max(0.75);
         let offs = margin + size / 2.0;
 
         let position = pos2(node_rect.right() - offs, node_rect.top() + offs);

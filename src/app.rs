@@ -2575,7 +2575,9 @@ fn paint_close_buttons(
         };
         painter.rect_filled(disc, egui::Rounding::same(disc.height() * 0.5), fill);
         let color = if hot { pal.text } else { pal.dim };
-        let stroke = egui::Stroke::new(1.6, color);
+        // The glyph shrinks with the card, so the stroke has to as well: a
+        // fixed 1.6 px line on a 4 px cross at 40% zoom was all ink and no ✕.
+        let stroke = egui::Stroke::new((1.6 * zoom).max(0.75), color);
         painter.line_segment([rect.left_top(), rect.right_bottom()], stroke);
         painter.line_segment([rect.right_top(), rect.left_bottom()], stroke);
     }
@@ -3441,32 +3443,41 @@ mod tests {
     #[test]
     fn zoom_keeps_cards_the_same_size() {
         let mut h = Harness::new();
-        h.frame(Vec::new());
-        // The Package card is the worst case: two fan-in inputs, which is where
-        // the dependency's unscaled padding hurt most.
-        let node = h.app.editor.node_order[4];
-        let reference = h.node_rect(node);
+        let ctx = h.ctx.clone();
+        h.app.demo_set_zoom(&ctx, 1.0);
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
 
-        let down = [-60.0; 8];
-        let up = [60.0; 12];
-        for step in down.into_iter().chain(up) {
-            h.wheel(h.app.canvas_rect.center(), step);
-            for _ in 0..3 {
+        // Every card, not just Package: Source is the one with the inline
+        // "probe" button, which used to keep a fixed 18 px height and set a
+        // 46 px-wide floor at 40% zoom, so the whole card reflowed around it.
+        let nodes = h.app.editor.node_order.clone();
+        let reference: Vec<_> = nodes
+            .iter()
+            .map(|&node| (node, h.node_rect(node).size()))
+            .collect();
+
+        for target in [0.4, 0.7, 1.3] {
+            h.app.demo_set_zoom(&ctx, target);
+            for _ in 0..4 {
                 h.frame(Vec::new());
             }
             let zoom = h.app.editor.pan_zoom.zoom;
-            let rect = h.node_rect(node);
-            let (w, ht) = (rect.width() / zoom, rect.height() / zoom);
-            assert!(
-                (w - reference.width()).abs() < reference.width() * 0.08,
-                "card is {w:.0} graph px wide at zoom {zoom:.2}, expected {:.0}",
-                reference.width()
-            );
-            assert!(
-                (ht - reference.height()).abs() < reference.height() * 0.08,
-                "card is {ht:.0} graph px tall at zoom {zoom:.2}, expected {:.0}",
-                reference.height()
-            );
+            for &(node, want) in &reference {
+                let rect = h.node_rect(node);
+                let (w, ht) = (rect.width() / zoom, rect.height() / zoom);
+                assert!(
+                    (w - want.x).abs() < (want.x * 0.08).max(2.0),
+                    "card is {w:.0} graph px wide at zoom {zoom:.2}, expected {:.0}",
+                    want.x
+                );
+                assert!(
+                    (ht - want.y).abs() < (want.y * 0.08).max(2.0),
+                    "card is {ht:.0} graph px tall at zoom {zoom:.2}, expected {:.0}",
+                    want.y
+                );
+            }
         }
     }
 
@@ -3490,6 +3501,28 @@ mod tests {
             h.frame(Vec::new());
         }
         let _ = h.app.compile_current();
+    }
+
+    /// One wheel event must produce one stable zoom, not a multi-frame tail.
+    ///
+    /// The editor used to read egui's `smooth_scroll_delta`; after the wheel
+    /// stopped, the remaining smoothed delta kept changing the zoom for a few
+    /// frames, re-rasterising every label and making the text visibly shiver.
+    #[test]
+    fn wheel_zoom_settles_immediately() {
+        let mut h = Harness::new();
+        h.wheel(h.app.canvas_rect.center(), -60.0);
+        h.frame(Vec::new());
+        let after_wheel = h.app.editor.pan_zoom.zoom;
+
+        for _ in 0..8 {
+            h.frame(Vec::new());
+        }
+        let settled = h.app.editor.pan_zoom.zoom;
+        assert!(
+            (settled - after_wheel).abs() < 1e-6,
+            "zoom kept moving after the wheel stopped: {after_wheel:.4} -> {settled:.4}"
+        );
     }
 
     /// Dragging a box over the canvas selects the nodes inside it.
