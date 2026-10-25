@@ -2104,13 +2104,9 @@ impl FflowApp {
                 let response = self
                     .editor
                     .draw_graph_editor(ui, AllTemplates, &mut self.ctx, vec![]);
-                // `egui_node_graph2` 0.7 opens its own node-finder popup on any
-                // secondary release. The node library on the left already does
-                // that job, so keep the popup closed (it is drawn before this
-                // point next frame, hence the clear on every frame).
-                self.editor.node_finder = None;
-                // Rebuilt from egui's widget registry; see `node_rects`.
-                let node_rects = node_rects(ctx, &self.editor);
+                // Exact painted rects for this frame, before `node_responses`
+                // is consumed below.
+                let node_rects = response.node_rects.clone();
 
                 // `egui_node_graph2` clears `selected_nodes` on *any* click whose
                 // pointer is outside the editor rect (`mouse.any_click() &&
@@ -2197,8 +2193,11 @@ impl FflowApp {
             // `Color32::WHITE.lighten(0.8)` behind the node, which is invisible on
             // the light palette, so draw one in the accent colour instead.
             //
-            // The rects come from `node_rects`, which extends the widget rect
-            // registered by the library to cover the card's rounded bottom cap.
+            // The rect comes from the editor itself (`node_rects`) rather than
+            // from `memory[Id::new((node, "window"))]`: that one is the *hit*
+            // rect, which lags a frame and stops 14.5 px short of the card's
+            // rounded bottom cap. Guessing the gap with a constant is why the
+            // ring sat above or below the card depending on the node.
             let zoom = self.editor.pan_zoom.zoom;
             for node in &self.editor.selected_nodes {
                 if let Some(r) = node_rects.get(node) {
@@ -2466,8 +2465,10 @@ fn library_card_id(kind: NodeKind) -> egui::Id {
 ///
 /// The geometry mirrors `egui_node_graph2`'s `close_button` exactly (margin
 /// 8 px, glyph 10 px, both scaled by zoom), so the repainted cross lands on the
-/// original and the hit area still belongs to the dependency. The card rects
-/// come from `node_rects`.
+/// original and the hit area still belongs to the dependency. The card rect is
+/// this frame's (from `GraphResponse::node_rects`), not the hit rect read back
+/// out of memory — that one is a frame behind and made the ✕ trail the card
+/// while the view moved.
 fn paint_close_buttons(
     ui: &egui::Ui,
     order: &[egui_node_graph2::NodeId],
@@ -2517,51 +2518,6 @@ fn paint_close_buttons(
         painter.line_segment([rect.left_top(), rect.right_bottom()], stroke);
         painter.line_segment([rect.right_top(), rect.left_bottom()], stroke);
     }
-}
-
-/// Painted rect of every node card, keyed by node id.
-///
-/// `egui_node_graph2` 0.7 computes this rect while drawing each card but only
-/// keeps it in a private field, so callers cannot read it. It does register the
-/// card's interaction rect in egui's widget registry under `(node, "window")`,
-/// and that interaction rect *is* the card's outer rect (`child_ui.min_rect()`
-/// expanded by the card margin). We read it back here and add the rounded
-/// bottom cap that the painted card extends beyond it.
-///
-/// The interaction rect comes from the previous pass, so a node that is being
-/// dragged or zoomed is one frame behind. That was already true of the hit rect
-/// the app used before, and it only shows while the view is moving.
-fn node_rects(
-    ctx: &egui::Context,
-    editor: &GraphEditor,
-) -> HashMap<egui_node_graph2::NodeId, egui::Rect> {
-    let zoom = editor.pan_zoom.zoom;
-    let cap = bottom_cap_height(ctx, zoom);
-    editor
-        .node_order
-        .iter()
-        .filter_map(|&node| {
-            let mut rect = ctx.read_response(egui::Id::new((node, "window")))?.rect;
-            rect.max.y += cap;
-            Some((node, rect))
-        })
-        .collect()
-}
-
-/// How far the painted card extends below the interaction rect.
-///
-/// Upstream builds the card from `titlebar_rect ∪ body_rect ∪ bottom_body_rect`.
-/// The latter overshoots the outer rect by `titlebar_height / 2 - rounding`,
-/// where `titlebar_height = title_height + margin.y`, and `title_height` itself
-/// is the title row plus `item_spacing.y` plus `margin.y` (the crate calls
-/// `add_space(margin.y)` before measuring it). With the app's 6 px item spacing
-/// and upstream's 5 px margin and 4 px rounding that reduces to
-/// `title_row / 2 + 4 * zoom`.
-fn bottom_cap_height(ctx: &egui::Context, zoom: f32) -> f32 {
-    let style = ctx.style();
-    let font = egui::TextStyle::Button.resolve(&style);
-    let row = ctx.fonts(|f| f.row_height(&egui::FontId::new(font.size * zoom, font.family)));
-    row * 0.5 + 4.0 * zoom
 }
 
 /// Foldable group title for the library: caret, name, count.
@@ -3316,13 +3272,11 @@ mod tests {
     /// Cards are diagrams, not forms: they must stay small enough that five of
     /// them fit across a normal canvas.
     ///
-    /// Measured through the interaction rect (one frame stale, hence the slack),
-    /// with the unpatched crates.io crate: Source 154x99, Demux 154x122,
-    /// encoders 154x115, Package 154x151 — the Package is the tall one because
-    /// both of its inputs are fan-in ports, and the library reserves a second
-    /// hook row on those. (With the `egui_node_graph2` fork of 12/4 px card
-    /// margins and 3 px body spacing the same cards were 148 wide and 87–136
-    /// tall; see *Known visual limitations* in the README.)
+    /// Measured through the interaction rect (one frame stale, hence the slack):
+    /// Source 148x87, Demux 148x107, encoders ~148x85, Package 148x136 — the
+    /// Package is the tall one because both of its inputs are fan-in ports, and
+    /// the library reserves a second hook row on those. Before the compaction
+    /// pass every card was 176 wide and up to 158 tall.
     #[test]
     fn cards_stay_compact() {
         let h = Harness::new();
@@ -3336,7 +3290,7 @@ mod tests {
                 r.width()
             );
             assert!(
-                r.height() <= 165.0,
+                r.height() <= 140.0,
                 "{} is {:.0} px tall",
                 h.app.editor.graph[*node].label,
                 r.height()
@@ -3360,28 +3314,25 @@ mod tests {
         );
     }
 
-    /// Zooming must not change a card's *width* relative to the graph.
+    /// Zooming must not change a card's size *relative to the graph*.
     ///
-    /// A fixed 146 px width floor in `right_label` used to inflate cards to
-    /// 247 graph px at 0.68x and shrink them to 127 at 1.46x; the floor is now
-    /// zoom-scaled, and this test locks that in.
+    /// Two separate leaks made this false:
     ///
-    /// Height does **not** hold still, because `egui_node_graph2` compares an
-    /// unscaled `port_height` (10 or 25 px) against a scaled row height and
-    /// adds the difference as padding: 8–28 px per inline input depending on
-    /// the zoom. With the crate unpatched the Package card measures 126 graph
-    /// px tall at 1.56x and 245 at 0.40x (0.84x–1.62x of its size at 1.0). The
-    /// bound below only catches a runaway layout, not the upstream drift; see
-    /// *Known visual limitations* in the README for why this is not fixed.
+    /// * `right_label` used a fixed 146 px width floor, so cards inflated to
+    ///   247 graph px at 0.68x and shrank to 127 at 1.46x.
+    /// * `egui_node_graph2` scales its style for zoom but compared an unscaled
+    ///   `port_height` (10 or 25 px) against a scaled row height, adding ~25 px
+    ///   of padding per inline input. Cards grew to four times their natural
+    ///   height when zoomed out — tall narrow slabs.
     ///
     /// Measured through the interaction rect, which lags a frame, hence the
     /// tolerance.
     #[test]
-    fn zoom_keeps_card_width_stable() {
+    fn zoom_keeps_cards_the_same_size() {
         let mut h = Harness::new();
         h.frame(Vec::new());
         // The Package card is the worst case: two fan-in inputs, which is where
-        // the dependency's unscaled padding hurts most.
+        // the dependency's unscaled padding hurt most.
         let node = h.app.editor.node_order[4];
         let reference = h.node_rect(node);
 
@@ -3401,8 +3352,8 @@ mod tests {
                 reference.width()
             );
             assert!(
-                ht > reference.height() * 0.75 && ht < reference.height() * 1.8,
-                "card is {ht:.0} graph px tall at zoom {zoom:.2}, expected roughly {:.0}",
+                (ht - reference.height()).abs() < reference.height() * 0.08,
+                "card is {ht:.0} graph px tall at zoom {zoom:.2}, expected {:.0}",
                 reference.height()
             );
         }

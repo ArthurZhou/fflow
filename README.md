@@ -382,9 +382,12 @@ src/
 ├── compiler.rs    graph → ffmpeg argv (+ filter_complex, output template)
 ├── runner.rs      tokio batch, Semaphore, -progress parsing, cancellation
 └── shot.rs        offscreen egui render → software rasteriser → PPM
-```
 
-There are no vendored crates: `egui_node_graph2` comes straight from crates.io.
+vendor/egui_node_graph2/   upstream 0.7.0, patched: zoom-scaled port padding,
+                           card border + tighter body spacing, exact node rects
+                           in `GraphResponse`, themed box-selection marquee
+                           (each patch is marked `fflow patch` in the source)
+```
 
 Threading model: the UI thread only draws and reads channels. Probes and ffmpeg
 processes run on a 2-worker tokio runtime; results arrive over unbounded channels
@@ -493,26 +496,10 @@ how the dark/light shots in `shots/` are produced.
     by definition the style the card is being laid out with.
   - The dependency has the same bug in its own layout: it compares an unscaled
     `port_height` (10 or 25 px) against a scaled row height and adds the
-    difference as padding, so below 100% every inline input row gains dead
-    space. This app uses the crate unpatched, so cards are taller than they
-    should be while zoomed out; the effect grows as the zoom shrinks.
-* **Known visual limitations of the unpatched graph crate.** Removing the fork
-  keeps the build reproducible, at the cost of these upstream behaviours, which
-  the app cannot override from outside `draw_graph_editor`:
-  - Port padding is not zoom-scaled (above), so zoomed-out cards are airy.
-  - Existing wires are painted *after* the cards, so an edge can cross a card.
-  - Card body colour is hard-coded (`#3f3f3f` dark / `#ffffff` light) instead
-    of following the palette; cards have no hairline border.
-  - Inside a card the library uses the app's 6 px item spacing, and its own
-    15/5 px margins, instead of the tighter 12/4 + 3 px layout the fork used.
-  - The box-selection marquee is a hard-coded pale grey rather than the theme
-    selection colour.
-  - A secondary release on empty canvas still asks the library to open its
-    node-finder popup; `canvas()` clears `node_finder` after every frame, so it
-    is not kept, but the app no longer patches the crate to never open it.
-  The node-card rects used for the selection ring and the repainted ✕ are now
-  reconstructed from egui's widget registry (`node_rects` in `app.rs`), since
-  `GraphResponse` no longer exposes them.
+    difference as padding, ~25 px per inline input at any zoom. Cards grew to
+    four times their natural height when zoomed out — tall narrow slabs. Fixed
+    in `vendor/egui_node_graph2` (see *Source layout*), because there is no hook
+    for it.
 * **The ✕ is repainted, not replaced.** `egui_node_graph2` draws the close
   button as two bare strokes straight onto the node body, which disappears over
   a coloured title bar. Rather than fork the dependency, `paint_close_buttons`
@@ -581,9 +568,11 @@ how the dark/light shots in `shots/` are produced.
   sat behind the inspector — which reads as a stacking bug, not as "the graph
   continues off-screen". The first layout zooms to fit (never below 0.45) and
   centres the bounding box; a 1440-wide window still opens at 100%.
-* **Cards are compact on purpose.** 148 px wide, 87–136 px tall. The width
-  floor in `right_label` (146 → 124) and the row height (22 → 16 px) were the
-  two numbers that made every card a slab.
+* **Cards are compact on purpose.** 148 px wide, 87–136 px tall, 1 px
+  `bg_stroke` border. The width floor in `right_label` (146 → 124) and the
+  row height (22 → 16 px) were the two numbers that made every card a slab;
+  `egui_node_graph2`'s 6 px item spacing is halved inside a node body, where it
+  was pure padding between one-line port rows.
 * **`egui_node_graph2` deselects on any click outside the editor.** Its
   `mouse.any_click() && !cursor_in_editor` branch fires for clicks on the
   inspector too — so the first click on any form control blanked the panel that

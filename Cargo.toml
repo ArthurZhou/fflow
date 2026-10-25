@@ -18,6 +18,13 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# `egui_node_graph2` 0.7 scales its *style* for zoom but forgets two constants
+# in the node layout (`port_height` and a 5 px margin), so every inline input
+# row kept ~25 px of unscaled padding and cards grew to 4x their natural height
+# when zoomed out. See vendor/egui_node_graph2/src/editor_ui.rs for the patch.
+[patch.crates-io]
+egui_node_graph2 = { path = "vendor/egui_node_graph2" }
+
 [profile.dev]
 opt-level = 1
 
