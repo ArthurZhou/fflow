@@ -2246,18 +2246,6 @@ impl FflowApp {
                 &pal,
             );
 
-            // Category accent. Cards are deliberately neutral grey now; the
-            // only colour left is a 2 px top edge (and the icon in the library
-            // and inspector), which survives a zoomed-out view without turning
-            // the canvas into a pile of saturated blocks.
-            paint_node_accents(
-                ui,
-                &self.editor.graph,
-                &self.editor.node_order,
-                &node_rects,
-                zoom,
-            );
-
             // Selection ring, in the accent colour: the library's own outline is
             // `WHITE.lighten(0.8)`, invisible on the light palette.
             //
@@ -2527,37 +2515,6 @@ impl eframe::App for FflowApp {
 /// drag ghost that follows the pointer).
 fn library_card_id(kind: NodeKind) -> egui::Id {
     egui::Id::new(("lib-card", kind.id()))
-}
-
-/// A 2 px category-coloured line along the top edge of every node card.
-///
-/// The cards themselves are neutral grey (the dependency no longer paints a
-/// saturated titlebar); this bar is all that is left of the old per-family
-/// colour, so the video and audio branches stay readable without turning the
-/// canvas into blocks of orange and green.
-fn paint_node_accents(
-    ui: &egui::Ui,
-    graph: &egui_node_graph2::Graph<graph::NodeData, graph::StreamType, graph::InlineValue>,
-    order: &[egui_node_graph2::NodeId],
-    rects: &std::collections::HashMap<egui_node_graph2::NodeId, egui::Rect>,
-    zoom: f32,
-) {
-    let painter = ui.painter();
-    for &node in order {
-        let Some(card) = rects.get(&node) else {
-            continue;
-        };
-        let color = theme::node_color(graph.nodes[node].user_data.kind());
-        // Inset by the card's corner radius so the line follows the top edge
-        // instead of poking out of the rounded corners.
-        let inset = 4.0 * zoom;
-        let h = (2.0 * zoom).max(1.5);
-        let bar = egui::Rect::from_min_max(
-            egui::pos2(card.left() + inset, card.top()),
-            egui::pos2(card.right() - inset, card.top() + h),
-        );
-        painter.rect_filled(bar, egui::Rounding::same(h * 0.5), theme::alpha(color, 210));
-    }
 }
 
 /// Soft disc + ✕ on top of each node, replacing the bare strokes the
@@ -2987,6 +2944,10 @@ mod tests {
             // The real settings file may hold whatever the user last dragged;
             // the layout tests need a known starting point.
             app.settings.panels = model::PanelSizes::default();
+            // Same for the language: `--lang zh` and the toolbar toggle both
+            // persist it, and these tests assert on English strings (and on
+            // English node labels, which `build` took from that same file).
+            app.set_language(Language::En);
             let mut h = Self {
                 ctx,
                 app,

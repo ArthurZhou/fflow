@@ -376,10 +376,10 @@ impl NodeDataTrait for NodeData {
         _user_state: &mut Self::UserState,
     ) -> Option<egui::Color32> {
         // The card is deliberately neutral grey; the family colour survives in
-        // the app's 2 px top accent and in the library/inspector icon. A tint
-        // of 8–10% here is just enough to separate a video card from an audio
-        // one when they sit side by side, and it keeps the title text (which
-        // the library paints in the theme's text colour) readable.
+        // the library/inspector icon and the port dots. A tint of 8–10% here is
+        // just enough to separate a video card from an audio one when they sit
+        // side by side, and it keeps the title text (which the library paints
+        // in the theme's text colour) readable.
         let cat = crate::theme::node_color(self.kind());
         let pal = crate::theme::p();
         Some(if crate::theme::is_dark() {

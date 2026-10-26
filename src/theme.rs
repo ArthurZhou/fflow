@@ -175,7 +175,8 @@ pub fn port_color(t: crate::graph::StreamType) -> Color32 {
 }
 
 /// Colour that identifies a node by the *media type* it works on. Used for the
-/// left stripe, the icon and the port dots — never for a filled background.
+/// icon, the card's titlebar tint and the port dots — never for a filled
+/// background or a border stripe.
 pub fn node_color(kind: crate::graph::NodeKind) -> Color32 {
     use crate::graph::nodes::Family;
     let p = p();
