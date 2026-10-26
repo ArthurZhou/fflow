@@ -602,6 +602,30 @@ where
     }
 }
 
+/// Connection stroke width in graph units, before the canvas zoom is applied.
+///
+/// fflow patch: settable from the host (`set_wire_width`) instead of a
+/// constant in this file, so tuning the look does not mean editing the
+/// vendored crate. Stored as raw bits because `AtomicF32` is not stable.
+static WIRE_WIDTH: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(f32::to_bits(2.0));
+
+/// Set the connection stroke width, in graph units; it is scaled by zoom.
+///
+/// Values below 0.5 px are clamped — a hairline disappears when the canvas is
+/// zoomed out, and a wire you cannot see is worse than a slightly thick one.
+pub fn set_wire_width(width: f32) {
+    WIRE_WIDTH.store(
+        f32::to_bits(width.clamp(0.5, 12.0)),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// Current connection stroke width, in graph units.
+pub fn wire_width() -> f32 {
+    f32::from_bits(WIRE_WIDTH.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 fn draw_connection(
     pan_zoom: &PanZoom,
     painter: &Painter,
@@ -616,9 +640,13 @@ fn draw_connection(
 /// wants in the paint order (see the wire placeholder in the editor).
 fn connection_shape(pan_zoom: &PanZoom, src_pos: Pos2, dst_pos: Pos2, color: Color32) -> Shape {
     // fflow patch: the stock 5 px opaque line reads as a hand-drawn marker.
-    // A single flat 2 px stroke instead: no glow, no halo. The stacked
-    // low-alpha layers only added a fuzzy edge at this width, and a clean
-    // line keeps the canvas quiet next to the card shadows.
+    // A single flat stroke instead: no glow, no halo. The stacked low-alpha
+    // layers only added a fuzzy edge at this width, and a clean line keeps
+    // the canvas quiet next to the card shadows.
+    //
+    // The width comes from the app (`set_wire_width`) rather than a literal
+    // here, because "a bit thicker" is a look decision the host owns — and a
+    // number buried in a vendored file cannot be tuned without editing it.
     let control_scale = ((dst_pos.x - src_pos.x) * pan_zoom.zoom / 2.0).max(30.0 * pan_zoom.zoom);
     let src_control = src_pos + Vec2::X * control_scale;
     let dst_control = dst_pos - Vec2::X * control_scale;
@@ -627,7 +655,7 @@ fn connection_shape(pan_zoom: &PanZoom, src_pos: Pos2, dst_pos: Pos2, color: Col
         false,
         Color32::TRANSPARENT,
         egui::Stroke {
-            width: (2.0 * pan_zoom.zoom).max(1.25),
+            width: (wire_width() * pan_zoom.zoom).max(1.25),
             color,
         },
     ))

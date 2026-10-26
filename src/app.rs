@@ -181,6 +181,9 @@ impl FflowApp {
             .unwrap_or(settings.language);
         i18n::set(language);
         crate::theme::apply(egui_ctx, settings.dark_mode);
+        // The vendored editor cannot see `theme`, so the wire width is pushed
+        // into it once here instead of being hard-coded over there.
+        egui_node_graph2::set_wire_width(crate::theme::WIRE);
 
         let mut ctx = GraphCtx::default();
         let workflow = if autoload {
@@ -3333,6 +3336,19 @@ mod tests {
 
         h.app.set_language(i18n::Language::En);
         assert_eq!(h.app.editor.graph.nodes[node].label, english);
+    }
+
+    /// The wire width lives in `theme` but is drawn by the vendored editor, so
+    /// nothing stops the two from drifting apart. This is the one place that
+    /// notices if `build` stops pushing the value across.
+    #[test]
+    fn app_installs_the_theme_wire_width() {
+        let _ = Harness::new();
+        assert_eq!(
+            egui_node_graph2::wire_width(),
+            theme::WIRE,
+            "the editor is not using theme::WIRE"
+        );
     }
 
     /// Each handle must sit on the edge it resizes.

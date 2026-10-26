@@ -201,6 +201,11 @@ pub const ROUND: f32 = 6.0;
 pub const ROUND_CARD: f32 = 8.0;
 /// Height shared by every toolbar/panel button.
 pub const BUTTON_H: f32 = 28.0;
+/// Connection stroke width, in graph px (the canvas zoom scales it).
+///
+/// 2.0 was the first pass and read a touch thin next to the 8 px cards; 2.5
+/// keeps the line visible at 50% zoom without turning into a cable.
+pub const WIRE: f32 = 2.5;
 /// Gutter between a form's label and its control.
 pub const LABEL_W: f32 = 92.0;
 
