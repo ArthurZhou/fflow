@@ -1,3 +1,4 @@
+#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 //! fflow — a Scratch-like visual front-end for batch ffmpeg processing.
 //!
 //! Pure Rust desktop app (eframe/egui). Media work is always delegated to the

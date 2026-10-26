@@ -30,3 +30,10 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.release]
+opt-level = 3          # 最高优化等级（默认就是 3，但显式声明更稳妥）
+lto = "fat"            # 开启全程序链接时优化（Link-Time Optimization），大幅提升跨模块性能
+codegen-units = 1      # 将并行代码生成单元设为 1，让 LLVM 有全局视野进行深度优化（会增加编译时间）
+panic = "abort"        # 遇到 panic 时直接终止，省去栈展开（Unwinding）的开销，减小体积并略微提升性能
+strip = true           # 自动剥离符号表和调试信息，减小二进制文件体积，加快加载启动速度
