@@ -11,11 +11,8 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
-  # Build-only dry run: the release job is skipped without a tag, so this
-  # exercises all four targets without publishing anything.
-  workflow_dispatch:
+  release:
+    types: [published]
 
 concurrency:
   group: release-${{ github.ref }}
