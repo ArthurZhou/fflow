@@ -616,27 +616,21 @@ fn draw_connection(
 /// wants in the paint order (see the wire placeholder in the editor).
 fn connection_shape(pan_zoom: &PanZoom, src_pos: Pos2, dst_pos: Pos2, color: Color32) -> Shape {
     // fflow patch: the stock 5 px opaque line reads as a hand-drawn marker.
-    // Three stacked beziers — a wide low-alpha glow, a mid halo, and a 2 px
-    // core — give a thin luminous "data flow" that stays legible at any zoom
-    // without the saturated slab.
+    // A single flat 2 px stroke instead: no glow, no halo. The stacked
+    // low-alpha layers only added a fuzzy edge at this width, and a clean
+    // line keeps the canvas quiet next to the card shadows.
     let control_scale = ((dst_pos.x - src_pos.x) * pan_zoom.zoom / 2.0).max(30.0 * pan_zoom.zoom);
     let src_control = src_pos + Vec2::X * control_scale;
     let dst_control = dst_pos - Vec2::X * control_scale;
-    let bez = |width: f32, tint: Color32| {
-        Shape::CubicBezier(CubicBezierShape::from_points_stroke(
-            [src_pos, src_control, dst_control, dst_pos],
-            false,
-            Color32::TRANSPARENT,
-            egui::Stroke { width, color: tint },
-        ))
-    };
-    let core = (2.0 * pan_zoom.zoom).max(1.25);
-    let glow = |a: u8| Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a);
-    Shape::Vec(vec![
-        bez(core * 4.0, glow(14)),
-        bez(core * 2.2, glow(40)),
-        bez(core, glow(230)),
-    ])
+    Shape::CubicBezier(CubicBezierShape::from_points_stroke(
+        [src_pos, src_control, dst_control, dst_pos],
+        false,
+        Color32::TRANSPARENT,
+        egui::Stroke {
+            width: (2.0 * pan_zoom.zoom).max(1.25),
+            color,
+        },
+    ))
 }
 
 #[derive(Clone, Copy, Debug)]

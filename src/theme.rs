@@ -154,7 +154,7 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgb(f(a.r(), b.r()), f(a.g(), b.g()), f(a.b(), b.b()))
 }
 
-/// Same colour at a given alpha, useful for glows and hairlines.
+/// Same colour at a given alpha, useful for hairlines and soft fills.
 pub fn alpha(c: Color32, a: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
