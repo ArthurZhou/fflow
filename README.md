@@ -261,6 +261,7 @@ fflow --screenshot <out.ppm> [--size 1600x980] [--select N]
 ## 源码结构
 
 ```text
+.github/workflows/ ci.yml（三平台测试）、release.yml（打 tag 出四个产物）
 build.rs           Windows 图标资源：rc.exe 编译 assets/fflow.rc，结果链接进 exe
 assets/            icon.svg（原件）、icon-16…512.png、icon.ico、fflow.rc
 tools/
@@ -310,6 +311,47 @@ src/
 - 画布缩放到 35% 以下时，节点正文只有几个像素高，文字不再具备可读性；需要看清内容时请放大。
 - **滚动区域最后一行的渐隐**是手绘网格渐变，不是真正的模糊。
 - 画布点阵随缩放变化密度，不严格对齐图坐标。
+
+---
+
+## 发布
+
+跨平台靠的是代码结构，不是祈祷。所有跟系统打交道的地方都是收敛的：
+
+| 关注点 | 处理 |
+|---|---|
+| 子进程 | 一律 `Command::new("ffmpeg")` 走 PATH，没有 FFI、没有 libav 链接；`CREATE_NO_WINDOW` 只在 `#[cfg(windows)]` 里出现 |
+| 打开输出目录 | `explorer` / `open` / `xdg-open` 三分支 `cfg` |
+| 字体 | 三平台路径列表 + egui 内置 Ubuntu/Hack 兜底，CJK 作为 fallback 追加 |
+| 图标 | `build.rs` 在非 Windows 上直接 return；窗口图标走 `with_icon`（Wayland 会忽略，符合预期） |
+| 离屏渲染 | `--screenshot` 用裸 `egui::Context` + 软件光栅化，不建窗口、不碰 GL，所以无头机器也能跑 |
+| 构建期系统库 | 一个都不需要：winit 默认开 `wayland-dlopen` 与 `xkbcommon-dl`，`x11-dl` 的 pkg-config 只是软探测，rfd 0.15 走 xdg-desktop-portal 而不是 GTK |
+
+两个 workflow：
+
+| 文件 | 触发 | 做什么 |
+|---|---|---|
+| `.github/workflows/ci.yml` | push / PR | 三个系统各跑一遍 `cargo test` |
+| `.github/workflows/release.yml` | push tag `v*` | 编四个目标、逐个冒烟测试、打包、挂到 Release |
+
+发版就是打 tag，一次 tag 对应一次运行、一套产物：
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+产物四个：`fflow-<版本>-windows-x64.zip`、`-linux-x64.tar.gz`、`-macos-arm64.tar.gz`、`-macos-x64.tar.gz`。
+
+每个平台编完会跑一次 `fflow --screenshot`，检查输出是 PPM 的 `P6` 头。编译通过只说明链上了，渲染出一帧才说明二进制真的能启动——字体、资源、图标都在里面。
+
+几个刻意的选择：
+
+- **`ubuntu-22.04` 而不是 `-latest`**：glibc 向下兼容，在哪个系统上编就决定了最低能跑哪个系统。用 24.04 编出来的二进制跑不了 Ubuntu 22.04 / Debian 12。
+- **macOS 两个架构都在 arm64 runner 上编**：Apple SDK 自带两份 slice，不需要单独的 Intel 机器。
+- **`release` job `needs: build`**：四个平台全过才发版。少一个 macOS 包的 release 比一次红的 CI 更难发现。
+- **`workflow_dispatch` 只编不发**：没有 tag 时 release job 直接跳过，可以拿它干跑。
+- **tag 与 `Cargo.toml` 版本号比对**：`v0.2.0` 打在 0.1.0 的树上会让产物名全是错的版本，下游不会有人发现。
 
 ---
 

@@ -1,3 +1,7 @@
 target/
 shots/
 testdata/
+
+# release packaging (only produced by the CI steps, but easy to make locally)
+dist/
+artifacts/

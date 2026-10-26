@@ -1,0 +1,168 @@
+# Builds the shipped binaries and attaches them to a GitHub Release.
+#
+# A version tag is what publishes a release — there is one trigger, so one tag
+# produces exactly one run and one set of assets:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# `release` needs `build`, so nothing is published until every platform has
+# built. A release that is silently missing the macOS download is worse than a
+# red run.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Build-only dry run: the release job is skipped without a tag, so this
+  # exercises all four targets without publishing anything.
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    # The release profile is `lto = "fat"` + `codegen-units = 1`, which is
+    # minutes per target on a 3-core macOS runner. A hang should surface as a
+    # failure, not as a job that sits there for the six-hour default.
+    timeout-minutes: 45
+    strategy:
+      # A broken platform must not cancel the others — seeing all four results
+      # at once is the entire point of a cross-platform release.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+          # 22.04 rather than -latest: the glibc a binary links against is the
+          # oldest distribution it will start on, and building on 24.04 would
+          # lock out Ubuntu 22.04 / Debian 12 for no benefit.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          # Cross-compiled on the same arm64 runner: Apple's SDK ships both
+          # slices, so this needs no separate Intel machine.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            label: macos-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Compiling proves it links; this proves it *runs*. `--screenshot` goes
+      # through the real UI (fonts, layout, painting) into a software
+      # rasteriser and exits before eframe opens a window, so it needs no
+      # display and no GPU.
+      - name: Smoke test
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/fflow"
+          if [ -f "$bin.exe" ]; then bin="$bin.exe"; fi
+          "$bin" --screenshot "$RUNNER_TEMP/shot.ppm" --size 900x640 --no-detect
+          # A PPM magic number is the cheapest proof that a frame was drawn and
+          # written: a missing font, a bad resource or a link error would have
+          # aborted before this line.
+          head -c 2 "$RUNNER_TEMP/shot.ppm" | grep -q P6
+          echo "rendered $(wc -c < "$RUNNER_TEMP/shot.ppm") bytes"
+
+      - name: Stage
+        id: stage
+        shell: bash
+        run: |
+          # The first `version = "..."` in Cargo.toml is [package].version;
+          # every dependency line is `name = "..."`. Parsed here rather than
+          # with `cargo metadata` so the release job needs no toolchain.
+          version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -1)
+          name="fflow-${version}-${{ matrix.label }}"
+
+          bin="target/${{ matrix.target }}/release/fflow"
+          if [ -f "$bin.exe" ]; then bin="$bin.exe"; fi
+
+          mkdir -p "dist/$name"
+          cp "$bin" "dist/$name/"
+          cp README.md "dist/$name/"
+          if [ -f LICENSE ]; then cp LICENSE "dist/$name/"; fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      # One archive per platform, in the format that platform's users expect.
+      # Each runs in its own native shell rather than calling across.
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Compress-Archive -Path "dist/${{ steps.stage.outputs.name }}" `
+                           -DestinationPath "artifacts/${{ steps.stage.outputs.name }}.zip" -Force
+
+      - name: Archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          tar -czf "artifacts/${{ steps.stage.outputs.name }}.tar.gz" -C dist "${{ steps.stage.outputs.name }}"
+          ls -l artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    # `workflow_dispatch` has no tag to publish to — it is a dry run.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # A v0.2.0 tag on a 0.1.0 tree would ship archives named after the wrong
+      # version, and nothing downstream would notice.
+      - name: Check the tag against Cargo.toml
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -1)
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml ($version)"
+            exit 1
+          fi
+          echo "releasing $version"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
