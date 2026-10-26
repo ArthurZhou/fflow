@@ -38,12 +38,12 @@ impl Eq for StreamType {}
 
 impl StreamType {
     pub fn name(&self) -> &'static str {
-        match self {
+        crate::i18n::t(match self {
             StreamType::File => "File",
             StreamType::Video => "Video",
             StreamType::Audio => "Audio",
             StreamType::Any => "Stream",
-        }
+        })
     }
 }
 
@@ -149,6 +149,8 @@ pub struct Settings {
     pub last_workflow: String,
     pub dark_mode: bool,
     #[serde(default)]
+    pub language: crate::i18n::Language,
+    #[serde(default)]
     pub panels: PanelSizes,
 }
 
@@ -159,7 +161,39 @@ impl Default for Settings {
             last_dir: String::new(),
             last_workflow: String::new(),
             dark_mode: true,
+            language: crate::i18n::Language::En,
             panels: PanelSizes::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::Language;
+
+    /// The chosen language must survive a save/load cycle, otherwise the UI
+    /// would silently revert to English on every restart.
+    #[test]
+    fn settings_round_trip_keeps_language() {
+        let settings = Settings {
+            language: Language::Zh,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.language, Language::Zh);
+        // Stored as a readable code, not a variant name or index.
+        assert!(json.contains("\"language\":\"zh\""), "got {json}");
+    }
+
+    /// Settings files written before i18n existed have no `language` key;
+    /// they must load as English instead of failing the whole parse.
+    #[test]
+    fn old_settings_without_language_load_as_english() {
+        let json = r#"{"concurrency":4,"last_dir":"","last_workflow":"","dark_mode":false}"#;
+        let settings: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.language, Language::En);
+        assert_eq!(settings.concurrency, 4);
     }
 }

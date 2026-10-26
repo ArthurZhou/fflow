@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::tr;
+
 use super::{number_row_f32, number_row_u32, path_row, segments, text_row, wrap_row};
 
 // ---------------------------------------------------------------------------
@@ -30,17 +32,17 @@ impl ScaleMode {
 
     pub fn label(&self) -> &'static str {
         match self {
-            ScaleMode::Exact => "exact",
-            ScaleMode::Fit => "fit",
-            ScaleMode::Fill => "fill",
+            ScaleMode::Exact => tr!("exact"),
+            ScaleMode::Fit => tr!("fit"),
+            ScaleMode::Fill => tr!("fill"),
         }
     }
 
     pub fn hint(&self) -> &'static str {
         match self {
-            ScaleMode::Exact => "scale to these numbers; -2 keeps the aspect ratio",
-            ScaleMode::Fit => "largest size inside the box, aspect preserved",
-            ScaleMode::Fill => "cover the box, crop the overflow",
+            ScaleMode::Exact => tr!("scale to these numbers; -2 keeps the aspect ratio"),
+            ScaleMode::Fit => tr!("largest size inside the box, aspect preserved"),
+            ScaleMode::Fill => tr!("cover the box, crop the overflow"),
         }
     }
 }
@@ -59,7 +61,7 @@ impl Rotate {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Rotate::None => "none",
+            Rotate::None => tr!("none"),
             Rotate::Cw90 => "90°",
             Rotate::R180 => "180°",
             Rotate::Cw270 => "270°",
@@ -81,10 +83,10 @@ impl Flip {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Flip::None => "none",
-            Flip::Horizontal => "h",
-            Flip::Vertical => "v",
-            Flip::Both => "both",
+            Flip::None => tr!("none"),
+            Flip::Horizontal => tr!("h"),
+            Flip::Vertical => tr!("v"),
+            Flip::Both => tr!("both"),
         }
     }
 }
@@ -106,9 +108,9 @@ impl LutInterp {
 
     pub fn label(&self) -> &'static str {
         match self {
-            LutInterp::Nearest => "nearest",
-            LutInterp::Trilinear => "trilinear",
-            LutInterp::Tetrahedral => "tetrahedral",
+            LutInterp::Nearest => tr!("nearest"),
+            LutInterp::Trilinear => tr!("trilinear"),
+            LutInterp::Tetrahedral => tr!("tetrahedral"),
         }
     }
 }
@@ -127,16 +129,16 @@ impl ChannelMode {
 
     pub fn label(&self) -> &'static str {
         match self {
-            ChannelMode::Mono => "mono",
-            ChannelMode::Stereo => "stereo",
+            ChannelMode::Mono => tr!("mono"),
+            ChannelMode::Stereo => tr!("stereo"),
             ChannelMode::FiveOne => "5.1",
         }
     }
 
     pub fn layout(&self) -> &'static str {
         match self {
-            ChannelMode::Mono => "mono",
-            ChannelMode::Stereo => "stereo",
+            ChannelMode::Mono => tr!("mono"),
+            ChannelMode::Stereo => tr!("stereo"),
             ChannelMode::FiveOne => "5.1",
         }
     }
@@ -347,7 +349,7 @@ impl RotateConfig {
             parts.push(self.rotate.label().to_string());
         }
         if self.flip != Flip::None {
-            parts.push(format!("flip {}", self.flip.label()));
+            parts.push(tr!("flip {}", self.flip.label()));
         }
         if parts.is_empty() {
             "passthrough".into()
@@ -446,7 +448,7 @@ impl ColorConfig {
 
     pub fn summary(&self) -> String {
         if self.is_neutral() {
-            return "neutral".into();
+            return tr!("neutral").into();
         }
         format!(
             "b {:+.2} · c {:.2} · s {:.2}",
@@ -521,7 +523,7 @@ impl SharpenConfig {
 
     pub fn summary(&self) -> String {
         if self.amount.abs() < 1e-4 {
-            "off".into()
+            tr!("off").into()
         } else {
             format!("{:.2}", self.amount)
         }
@@ -553,7 +555,7 @@ impl DenoiseConfig {
 
     pub fn summary(&self) -> String {
         if self.strength.abs() < 1e-4 {
-            "off".into()
+            tr!("off").into()
         } else {
             format!("{:.1}", self.strength)
         }
@@ -724,7 +726,7 @@ impl BandConfig {
 
     pub fn summary(&self) -> String {
         match (self.highpass, self.lowpass) {
-            (0, 0) => "off".into(),
+            (0, 0) => tr!("off").into(),
             (hp, 0) => format!("hp {} Hz", hp),
             (0, lp) => format!("lp {} Hz", lp),
             (hp, lp) => format!("hp {} · lp {} Hz", hp, lp),
@@ -830,7 +832,7 @@ impl RawFilterConfig {
 
     pub fn summary(&self) -> String {
         if self.expr.trim().is_empty() {
-            "empty".into()
+            tr!("empty").into()
         } else {
             short(self.expr.trim(), 30)
         }
@@ -844,13 +846,13 @@ impl RawFilterConfig {
 pub fn scale_form(ui: &mut egui::Ui, c: &mut ScaleConfig, changed: &mut bool) {
     segments(
         ui,
-        "Mode",
+        tr!("Mode"),
         &mut c.mode,
         &ScaleMode::ALL.map(|m| (m, m.label())),
         changed,
     );
-    text_row(ui, "Width", &mut c.width, changed);
-    text_row(ui, "Height", &mut c.height, changed);
+    text_row(ui, tr!("Width"), &mut c.width, changed);
+    text_row(ui, tr!("Height"), &mut c.height, changed);
     // Presets sit flush left under the fields: with the label gutter they
     // would not fit on one line in a 360 px panel.
     wrap_row(ui, |ui| {
@@ -873,25 +875,25 @@ pub fn scale_form(ui: &mut egui::Ui, c: &mut ScaleConfig, changed: &mut bool) {
 }
 
 pub fn pad_form(ui: &mut egui::Ui, c: &mut PadConfig, changed: &mut bool) {
-    text_row(ui, "Width", &mut c.width, changed);
-    text_row(ui, "Height", &mut c.height, changed);
-    text_row(ui, "X", &mut c.x, changed);
-    text_row(ui, "Y", &mut c.y, changed);
-    text_row(ui, "Colour", &mut c.color, changed);
+    text_row(ui, tr!("Width"), &mut c.width, changed);
+    text_row(ui, tr!("Height"), &mut c.height, changed);
+    text_row(ui, tr!("X"), &mut c.x, changed);
+    text_row(ui, tr!("Y"), &mut c.y, changed);
+    text_row(ui, tr!("Colour"), &mut c.color, changed);
     ui.label(
-        egui::RichText::new("accepts expressions, e.g. (ow-iw)/2")
+        egui::RichText::new(tr!("accepts expressions, e.g. (ow-iw)/2"))
             .small()
             .weak(),
     );
 }
 
 pub fn crop_form(ui: &mut egui::Ui, c: &mut CropConfig, changed: &mut bool) {
-    text_row(ui, "Width", &mut c.width, changed);
-    text_row(ui, "Height", &mut c.height, changed);
-    text_row(ui, "X", &mut c.x, changed);
-    text_row(ui, "Y", &mut c.y, changed);
+    text_row(ui, tr!("Width"), &mut c.width, changed);
+    text_row(ui, tr!("Height"), &mut c.height, changed);
+    text_row(ui, tr!("X"), &mut c.x, changed);
+    text_row(ui, tr!("Y"), &mut c.y, changed);
     ui.label(
-        egui::RichText::new("accepts iw / ih expressions")
+        egui::RichText::new(tr!("accepts iw / ih expressions"))
             .small()
             .weak(),
     );
@@ -900,14 +902,14 @@ pub fn crop_form(ui: &mut egui::Ui, c: &mut CropConfig, changed: &mut bool) {
 pub fn rotate_form(ui: &mut egui::Ui, c: &mut RotateConfig, changed: &mut bool) {
     segments(
         ui,
-        "Rotate",
+        tr!("Rotate"),
         &mut c.rotate,
         &Rotate::ALL.map(|r| (r, r.label())),
         changed,
     );
     segments(
         ui,
-        "Flip",
+        tr!("Flip"),
         &mut c.flip,
         &Flip::ALL.map(|f| (f, f.label())),
         changed,
@@ -915,21 +917,21 @@ pub fn rotate_form(ui: &mut egui::Ui, c: &mut RotateConfig, changed: &mut bool) 
 }
 
 pub fn fps_form(ui: &mut egui::Ui, c: &mut FpsConfig, changed: &mut bool) {
-    text_row(ui, "FPS", &mut c.fps, changed);
+    text_row(ui, tr!("FPS"), &mut c.fps, changed);
     ui.label(
-        egui::RichText::new("fractional rates work too, e.g. 23.976")
+        egui::RichText::new(tr!("fractional rates work too, e.g. 23.976"))
             .small()
             .weak(),
     );
 }
 
 pub fn color_form(ui: &mut egui::Ui, c: &mut ColorConfig, changed: &mut bool) {
-    number_row_f32(ui, "Brightness", &mut c.brightness, -1.0..=1.0, 0.01, changed);
-    number_row_f32(ui, "Contrast", &mut c.contrast, 0.0..=4.0, 0.01, changed);
-    number_row_f32(ui, "Saturation", &mut c.saturation, 0.0..=3.0, 0.01, changed);
-    number_row_f32(ui, "Gamma", &mut c.gamma, 0.1..=10.0, 0.01, changed);
+    number_row_f32(ui, tr!("Brightness"), &mut c.brightness, -1.0..=1.0, 0.01, changed);
+    number_row_f32(ui, tr!("Contrast"), &mut c.contrast, 0.0..=4.0, 0.01, changed);
+    number_row_f32(ui, tr!("Saturation"), &mut c.saturation, 0.0..=3.0, 0.01, changed);
+    number_row_f32(ui, tr!("Gamma"), &mut c.gamma, 0.1..=10.0, 0.01, changed);
     ui.label(
-        egui::RichText::new("all-neutral values leave the picture untouched")
+        egui::RichText::new(tr!("all-neutral values leave the picture untouched"))
             .small()
             .weak(),
     );
@@ -938,38 +940,38 @@ pub fn color_form(ui: &mut egui::Ui, c: &mut ColorConfig, changed: &mut bool) {
 pub fn lut_form(ui: &mut egui::Ui, c: &mut LutConfig, changed: &mut bool) {
     path_row(
         ui,
-        "File",
+        tr!("File"),
         &mut c.path,
         ("LUT", &["cube", "3dl", "dat", "m3d"]),
         changed,
     );
     segments(
         ui,
-        "Interp",
+        tr!("Interp"),
         &mut c.interp,
         &LutInterp::ALL.map(|i| (i, i.label())),
         changed,
     );
     ui.label(
-        egui::RichText::new(".cube / .3dl — usually placed before Sharpen")
+        egui::RichText::new(tr!(".cube / .3dl — usually placed before Sharpen"))
             .small()
             .weak(),
     );
 }
 
 pub fn sharpen_form(ui: &mut egui::Ui, c: &mut SharpenConfig, changed: &mut bool) {
-    number_row_f32(ui, "Amount", &mut c.amount, 0.0..=3.0, 0.02, changed);
+    number_row_f32(ui, tr!("Amount"), &mut c.amount, 0.0..=3.0, 0.02, changed);
     ui.label(
-        egui::RichText::new("0 disables the filter")
+        egui::RichText::new(tr!("0 disables the filter"))
             .small()
             .weak(),
     );
 }
 
 pub fn denoise_form(ui: &mut egui::Ui, c: &mut DenoiseConfig, changed: &mut bool) {
-    number_row_f32(ui, "Strength", &mut c.strength, 0.0..=20.0, 0.1, changed);
+    number_row_f32(ui, tr!("Strength"), &mut c.strength, 0.0..=20.0, 0.1, changed);
     ui.label(
-        egui::RichText::new("higher = smoother, more detail loss")
+        egui::RichText::new(tr!("higher = smoother, more detail loss"))
             .small()
             .weak(),
     );
@@ -978,54 +980,54 @@ pub fn denoise_form(ui: &mut egui::Ui, c: &mut DenoiseConfig, changed: &mut bool
 pub fn overlay_form(ui: &mut egui::Ui, c: &mut OverlayConfig, changed: &mut bool) {
     path_row(
         ui,
-        "Image",
+        tr!("Image"),
         &mut c.path,
-        ("Image", &["png", "jpg", "jpeg", "webp", "bmp"]),
+        (tr!("Image"), &["png", "jpg", "jpeg", "webp", "bmp"]),
         changed,
     );
-    text_row(ui, "X", &mut c.x, changed);
-    text_row(ui, "Y", &mut c.y, changed);
-    number_row_f32(ui, "Scale", &mut c.scale, 0.05..=4.0, 0.01, changed);
+    text_row(ui, tr!("X"), &mut c.x, changed);
+    text_row(ui, tr!("Y"), &mut c.y, changed);
+    number_row_f32(ui, tr!("Scale"), &mut c.scale, 0.05..=4.0, 0.01, changed);
     ui.label(
-        egui::RichText::new("the image is added as an extra ffmpeg input")
+        egui::RichText::new(tr!("the image is added as an extra ffmpeg input"))
             .small()
             .weak(),
     );
 }
 
 pub fn volume_form(ui: &mut egui::Ui, c: &mut VolumeConfig, changed: &mut bool) {
-    number_row_f32(ui, "Gain", &mut c.db, -60.0..=24.0, 0.1, changed);
+    number_row_f32(ui, tr!("Gain"), &mut c.db, -60.0..=24.0, 0.1, changed);
     ui.label(
-        egui::RichText::new("dB; negative quietens, 0 leaves the level alone")
+        egui::RichText::new(tr!("dB; negative quietens, 0 leaves the level alone"))
             .small()
             .weak(),
     );
 }
 
 pub fn loudness_form(ui: &mut egui::Ui, c: &mut LoudnessConfig, changed: &mut bool) {
-    number_row_f32(ui, "Target", &mut c.lufs, -70.0..=-5.0, 0.5, changed);
-    number_row_f32(ui, "True peak", &mut c.peak, -9.0..=0.0, 0.1, changed);
+    number_row_f32(ui, tr!("Target"), &mut c.lufs, -70.0..=-5.0, 0.5, changed);
+    number_row_f32(ui, tr!("True peak"), &mut c.peak, -9.0..=0.0, 0.1, changed);
     ui.label(
-        egui::RichText::new("integrated LUFS; -14 … -16 for web")
+        egui::RichText::new(tr!("integrated LUFS; -14 … -16 for web"))
             .small()
             .weak(),
     );
 }
 
 pub fn band_form(ui: &mut egui::Ui, c: &mut BandConfig, changed: &mut bool) {
-    number_row_u32(ui, "High-pass", &mut c.highpass, 0..=20000, changed);
-    number_row_u32(ui, "Low-pass", &mut c.lowpass, 0..=20000, changed);
+    number_row_u32(ui, tr!("High-pass"), &mut c.highpass, 0..=20000, changed);
+    number_row_u32(ui, tr!("Low-pass"), &mut c.lowpass, 0..=20000, changed);
     ui.label(
-        egui::RichText::new("Hz; 0 turns that side off")
+        egui::RichText::new(tr!("Hz; 0 turns that side off"))
             .small()
             .weak(),
     );
 }
 
 pub fn tempo_form(ui: &mut egui::Ui, c: &mut TempoConfig, changed: &mut bool) {
-    number_row_f32(ui, "Factor", &mut c.factor, 0.5..=2.0, 0.01, changed);
+    number_row_f32(ui, tr!("Factor"), &mut c.factor, 0.5..=2.0, 0.01, changed);
     ui.label(
-        egui::RichText::new("0.5 = half speed, 2 = double")
+        egui::RichText::new(tr!("0.5 = half speed, 2 = double"))
             .small()
             .weak(),
     );
@@ -1034,7 +1036,7 @@ pub fn tempo_form(ui: &mut egui::Ui, c: &mut TempoConfig, changed: &mut bool) {
 pub fn channels_form(ui: &mut egui::Ui, c: &mut ChannelsConfig, changed: &mut bool) {
     segments(
         ui,
-        "Layout",
+        tr!("Layout"),
         &mut c.mode,
         &ChannelMode::ALL.map(|m| (m, m.label())),
         changed,
@@ -1042,13 +1044,13 @@ pub fn channels_form(ui: &mut egui::Ui, c: &mut ChannelsConfig, changed: &mut bo
 }
 
 pub fn resample_form(ui: &mut egui::Ui, c: &mut ResampleConfig, changed: &mut bool) {
-    number_row_u32(ui, "Sample rate", &mut c.rate, 8000..=192_000, changed);
+    number_row_u32(ui, tr!("Sample rate"), &mut c.rate, 8000..=192_000, changed);
 }
 
 pub fn raw_form(ui: &mut egui::Ui, c: &mut RawFilterConfig, changed: &mut bool) {
-    text_row(ui, "Filter", &mut c.expr, changed);
+    text_row(ui, tr!("Filter"), &mut c.expr, changed);
     ui.label(
-        egui::RichText::new("verbatim, e.g. setpts=0.5*PTS or aecho=0.8:0.9:1000")
+        egui::RichText::new(tr!("verbatim, e.g. setpts=0.5*PTS or aecho=0.8:0.9:1000"))
             .small()
             .weak(),
     );

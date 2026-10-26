@@ -7,6 +7,7 @@ mod app;
 mod compiler;
 mod encoders;
 mod graph;
+mod i18n;
 mod probe;
 mod runner;
 mod shot;
@@ -35,6 +36,15 @@ fn main() -> eframe::Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `--lang` is applied through the environment so the GUI, the offscreen
+    // renderer and `--selftest` all take the same path. A saved settings file
+    // still wins on a normal launch; this is a per-run override.
+    if let Some(code) = arg_value(&args, "--lang") {
+        match i18n::Language::from_code(&code) {
+            Some(language) => std::env::set_var("FFLOW_LANG", language.code()),
+            None => eprintln!("unknown language `{code}` (expected en or zh)"),
+        }
+    }
     if args.first().map(|a| a == "--selftest").unwrap_or(false) {
         let dir = args.get(1).map(PathBuf::from);
         let code = match selftest(dir) {
@@ -64,6 +74,7 @@ fn main() -> eframe::Result<()> {
             probe: arg_value(&args, "--probe").map(PathBuf::from),
             detect: !args.iter().any(|a| a == "--no-detect"),
             demo_tasks: args.iter().any(|a| a == "--demo-tasks"),
+            show_help: args.iter().any(|a| a == "--show-help"),
             light: args.iter().any(|a| a == "--light"),
             workflow: arg_value(&args, "--workflow").map(PathBuf::from),
             zoom: arg_value(&args, "--zoom").and_then(|s| s.parse().ok()),
@@ -83,9 +94,12 @@ fn main() -> eframe::Result<()> {
              fflow --selftest <dir>      headless end-to-end check on <dir>\n  \
              fflow --screenshot <out.ppm> [--size 1600x980] [--select N]\n                              \
              [--dir <folder>] [--probe <file>] [--workflow <file>] [--zoom 1.5]\n                              \
-             [--no-detect] [--demo-tasks] [--light]\n                              \
+             [--no-detect] [--demo-tasks] [--show-help] [--light]\n                              \
+             [--lang en|zh]\n                              \
              render the UI offscreen (no display required)\n\n\
-             Environment: FFLOW_FFMPEG, FFLOW_FFPROBE override the binaries.",
+             Global: --lang en|zh switches the UI language for this run.\n\
+             Environment: FFLOW_FFMPEG, FFLOW_FFPROBE override the binaries;\n             \
+             FFLOW_LANG does the same as --lang.",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());

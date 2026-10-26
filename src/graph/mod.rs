@@ -265,12 +265,12 @@ impl NodeDataTrait for NodeData {
                     .unwrap_or(0);
                 if count > 0 {
                     ui.label(
-                        egui::RichText::new(format!("{} file(s)", count))
+                        egui::RichText::new(crate::tr!("{} files", count))
                             .small()
                             .color(egui::Color32::from_rgb(140, 200, 255)),
                     );
                 }
-                if crate::theme::mini_button(ui, "probe").clicked() {
+                if crate::theme::mini_button(ui, crate::tr!("probe")).clicked() {
                     responses.push(NodeResponse::User(FlowResponse::ProbeSource(self.json_id)));
                 }
             }
@@ -302,7 +302,7 @@ impl NodeDataTrait for NodeData {
                     };
                     ui.label(egui::RichText::new(text).small());
                 } else {
-                    ui.label(egui::RichText::new("probe pending").small().weak());
+                    ui.label(egui::RichText::new(crate::tr!("probe pending")).small().weak());
                 }
             }
             NodeConfig::Package(_) => {
@@ -319,7 +319,7 @@ impl NodeDataTrait for NodeData {
                 if connected == 0 {
                     ui.colored_label(
                         egui::Color32::from_rgb(220, 120, 100),
-                        egui::RichText::new("connect video and/or audio").small(),
+                        egui::RichText::new(crate::tr!("connect video and/or audio")).small(),
                     );
                 }
             }

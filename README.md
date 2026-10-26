@@ -19,6 +19,7 @@
 | **硬件编码** | 启动时探测 ffmpeg 可用编码器，优先使用可用的硬件编码（如 `h264_nvenc`），失败可回退软件 |
 | **实时进度** | 每个任务显示百分比、速度、已用 / 总时长；错误输出可展开、可复制 |
 | **工作流文件** | 存成可读 JSON（含节点坐标），换机器打开布局完全一致 |
+| **中英双语** | 右上角一键切换，选择持久化；节点库搜索同时索引两种语言 |
 
 ---
 
@@ -40,7 +41,7 @@ $env:FFLOW_FFPROBE = "D:\tools\ffprobe.exe"
 
 ```powershell
 cargo run --release          # 启动 GUI
-cargo test                   # 83 个测试
+cargo test                   # 89 个测试
 cargo build --release        # 产物：target\release\fflow.exe
 ```
 
@@ -53,10 +54,28 @@ fflow --screenshot <out.ppm> [--size 1600x980] [--select N]
                              [--dir <folder>] [--probe <file>]
                              [--workflow <file>] [--zoom 1.5]
                              [--no-detect] [--demo-tasks] [--light]
+                             [--lang en|zh]
                                        离屏渲染整窗 UI（不需要显示器 / GPU）
 ```
 
-`--screenshot` 是 `shots/` 里所有截图的产生方式，也是改完视觉后最快的验收手段。
+`--lang en|zh` 可加在任何模式前（包括 `--screenshot` 和 `--selftest`），环境变量
+`FFLOW_LANG` 等价。`--screenshot` 是 `shots/` 里所有截图的产生方式，也是改完视觉后最快的验收手段。
+
+### 多语言
+
+界面中英双语，右上角的 `中文` / `EN` 按钮一键切换，选择写进 `settings.json` 的
+`language` 字段，重启后保持；画布上已有的卡片会立即重命名，不需要重新加载工作流。
+
+实现是「英文即键」：`src/i18n.rs` 里一张 `(英文, 中文)` 平表，源码直接写英文原文，
+`tr!("Run")` 查表，查不到就原样显示英文。因此新增文案只需在表里补一行，漏翻译也不会崩，
+只会显示英文。带占位符的句子用 `tr!("{} files", n)`——`format!` 要求编译期字面量，
+所以 `i18n::format` 自己做了一次位置替换。
+
+两条容易被忽略的约定：
+
+- 节点标题、端口名、条件字段等**可序列化**的名字必须走 `tr!`；写进工作流 JSON 的只有
+  `NodeKind::id()` 和端口名（`in` / `out` / `video` / `audio`），所以翻译标题不会破坏旧文件。
+- 节点库搜索同时索引中英文，用中文界面搜 `resize`、或用英文界面搜 `缩放` 都能命中。
 
 ---
 
@@ -188,6 +207,7 @@ src/
 ├── main.rs        eframe 启动、--selftest / --screenshot 入口
 ├── app.rs         应用状态、三栏布局、事件泵、拖放、无头测试
 ├── theme.rs       调色板、字号/间距、矢量图标、公共控件
+├── i18n.rs        中英文案表、tr! 宏、运行时占位符替换
 ├── graph/
 │   ├── mod.rs     egui_node_graph2 trait 实现、工作流 ⇄ 编辑器转换
 │   ├── model.rs   Workflow / WfNode / Edge / Settings（serde）
@@ -230,9 +250,10 @@ src/
 ## 验证
 
 ```powershell
-cargo test                                  # 83 个单元 + 无头 UI 测试
+cargo test                                  # 89 个单元 + 无头 UI 测试
 cargo run -- --selftest testdata            # 真实调用 ffmpeg 的端到端检查
 cargo run -- --screenshot out.ppm           # 整窗离屏渲染
+cargo run -- --screenshot zh.ppm --lang zh  # 中文界面验收（含 CJK 字形）
 ```
 
 无头测试用 `egui::Context::run` 直接驱动 `draw_all`，因此布局、点击、框选、缩放、拖放都能在没有窗口和 GPU 的机器上回归。

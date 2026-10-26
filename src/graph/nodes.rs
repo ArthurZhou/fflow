@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::tr;
+
 use super::model::StreamType;
 
 mod filters;
@@ -412,16 +414,18 @@ impl NodeKind {
         SPECS.iter().find(|k| k.id == s).map(|k| k.kind)
     }
 
+    /// Localised card title. The stable id (not this string) is what the
+    /// workflow file stores, so translating it is safe.
     pub fn title(&self) -> &'static str {
-        self.spec().title
+        crate::i18n::t(self.spec().title)
     }
 
     pub fn category(&self) -> &'static str {
-        self.spec().category
+        crate::i18n::t(self.spec().category)
     }
 
     pub fn blurb(&self) -> &'static str {
-        self.spec().blurb
+        crate::i18n::t(self.spec().blurb)
     }
 
     pub fn keywords(&self) -> &'static str {
@@ -436,14 +440,25 @@ impl NodeKind {
         if needle.is_empty() {
             return true;
         }
+        // Index both languages unconditionally so the search still works
+        // after a switch: "resize" lives in the keywords, while "缩放" is the
+        // localised title and is invisible to `title()` when English is on.
+        let spec = self.spec();
         let hay = format!(
-            "{} {} {} {}",
+            "{} {} {} {} {} {} {} {} {} {}",
             self.title(),
             self.blurb(),
             self.category(),
+            crate::i18n::in_zh(spec.title),
+            crate::i18n::in_zh(spec.blurb),
+            crate::i18n::in_zh(spec.category),
+            spec.title,
+            spec.blurb,
+            spec.category,
             self.keywords()
         )
-        .to_ascii_lowercase();
+        .to_lowercase();
+        let needle = needle.to_lowercase();
         needle.split_whitespace().all(|word| hay.contains(word))
     }
 
@@ -523,10 +538,10 @@ impl TrackMode {
 
     pub fn label(&self) -> &'static str {
         match self {
-            TrackMode::First => "first",
-            TrackMode::All => "all",
-            TrackMode::Select => "pick",
-            TrackMode::Off => "off",
+            TrackMode::First => tr!("first"),
+            TrackMode::All => tr!("all"),
+            TrackMode::Select => tr!("pick"),
+            TrackMode::Off => tr!("off"),
         }
     }
 
@@ -597,13 +612,13 @@ impl DemuxConfig {
 
     pub fn summary(&self) -> String {
         let v = match self.video_mode {
-            TrackMode::Off => "no video".to_string(),
+            TrackMode::Off => tr!("no video").to_string(),
             TrackMode::First => "v:1".to_string(),
             TrackMode::All => "v:all".to_string(),
             TrackMode::Select => format!("v:{}", self.video_tracks.len()),
         };
         let a = match self.audio_mode {
-            TrackMode::Off => "no audio".to_string(),
+            TrackMode::Off => tr!("no audio").to_string(),
             TrackMode::First => "a:1".to_string(),
             TrackMode::All => "a:all".to_string(),
             TrackMode::Select => format!("a:{}", self.audio_tracks.len()),
@@ -664,20 +679,20 @@ impl CondField {
 
     pub fn label(&self) -> &'static str {
         match self {
-            CondField::FileName => "file name",
-            CondField::Extension => "extension",
-            CondField::Path => "full path",
-            CondField::Size => "size (MB)",
-            CondField::Duration => "duration (s)",
-            CondField::Width => "width",
-            CondField::Height => "height",
-            CondField::Fps => "fps",
-            CondField::VideoCodec => "video codec",
-            CondField::AudioCodec => "audio codec",
-            CondField::Bitrate => "bitrate (kbps)",
-            CondField::HasVideo => "has video",
-            CondField::HasAudio => "has audio",
-            CondField::Tag => "metadata",
+            CondField::FileName => tr!("file name"),
+            CondField::Extension => tr!("extension"),
+            CondField::Path => tr!("full path"),
+            CondField::Size => tr!("size (MB)"),
+            CondField::Duration => tr!("duration (s)"),
+            CondField::Width => tr!("width"),
+            CondField::Height => tr!("height"),
+            CondField::Fps => tr!("fps"),
+            CondField::VideoCodec => tr!("video codec"),
+            CondField::AudioCodec => tr!("audio codec"),
+            CondField::Bitrate => tr!("bitrate (kbps)"),
+            CondField::HasVideo => tr!("has video"),
+            CondField::HasAudio => tr!("has audio"),
+            CondField::Tag => tr!("metadata"),
         }
     }
 
@@ -727,12 +742,12 @@ impl CondOp {
 
     pub fn label(&self) -> &'static str {
         match self {
-            CondOp::Contains => "contains",
-            CondOp::NotContains => "does not contain",
-            CondOp::StartsWith => "starts with",
-            CondOp::EndsWith => "ends with",
-            CondOp::Equals => "is",
-            CondOp::Glob => "matches",
+            CondOp::Contains => tr!("contains"),
+            CondOp::NotContains => tr!("does not contain"),
+            CondOp::StartsWith => tr!("starts with"),
+            CondOp::EndsWith => tr!("ends with"),
+            CondOp::Equals => tr!("is"),
+            CondOp::Glob => tr!("matches"),
             CondOp::Greater => ">",
             CondOp::Less => "<",
         }
@@ -813,9 +828,13 @@ impl ConditionConfig {
 
     pub fn summary(&self) -> String {
         if self.rules.is_empty() {
-            return "always pass".into();
+            return tr!("always pass").into();
         }
-        let joiner = if self.match_all { " and " } else { " or " };
+        let joiner = if self.match_all {
+            tr!(" and ")
+        } else {
+            tr!(" or ")
+        };
         let mut s = self
             .rules
             .iter()
@@ -1300,7 +1319,7 @@ impl PackageConfig {
     }
 
     pub fn summary(&self) -> String {
-        format!(".{} container", self.ext())
+        tr!(".{} container", self.ext())
     }
 }
 
@@ -1463,11 +1482,11 @@ impl NodeConfig {
             NodeConfig::Source(c) => {
                 let n = c.paths.len();
                 if n == 0 {
-                    "⚠ no path selected".into()
+                    tr!("⚠ no path selected").into()
                 } else if n == 1 {
                     crate::source::short_name(std::path::Path::new(&c.paths[0]))
                 } else {
-                    format!("{} paths", n)
+                    tr!("{} paths", n)
                 }
             }
             NodeConfig::Demux(c) => c.summary(),
@@ -1501,11 +1520,11 @@ impl NodeConfig {
         match self {
             NodeConfig::Source(c) => {
                 if c.paths.is_empty() {
-                    out.push("Select a root folder or drop files onto the canvas.".into());
+                    out.push(tr!("Select a root folder or drop files onto the canvas.").to_string());
                 }
                 for p in &c.paths {
                     if !std::path::Path::new(p).exists() {
-                        out.push(format!("Path does not exist: {}", p));
+                        out.push(tr!("Path does not exist: {}", p));
                     }
                 }
             }
@@ -1513,13 +1532,15 @@ impl NodeConfig {
                 // No rules means "always pass" — harmless, not a problem.
                 for r in &c.rules {
                     if r.field == CondField::Tag && r.key.trim().is_empty() {
-                        out.push("A metadata rule needs a key (e.g. comment, artist).".into());
+                        out.push(
+                            tr!("A metadata rule needs a key (e.g. comment, artist).").to_string(),
+                        );
                     }
                 }
             }
             NodeConfig::Package(c) => {
                 if c.name_template.trim().is_empty() {
-                    out.push("Name template is empty.".into());
+                    out.push(tr!("Name template is empty.").to_string());
                 }
             }
             other => {
@@ -1527,7 +1548,7 @@ impl NodeConfig {
                 // compiler makes, so the inspector can never disagree with
                 // what will actually run.
                 if let Err(e) = other.filters() {
-                    out.push(e.to_string());
+                    out.push(crate::i18n::translate_dynamic(&e.to_string()));
                 }
             }
         }
@@ -1750,19 +1771,18 @@ fn path_row(
 }
 
 fn condition_form(ui: &mut egui::Ui, c: &mut ConditionConfig, changed: &mut bool) {
-    text_row(ui, "Name", &mut c.label, changed);
+    text_row(ui, tr!("Name"), &mut c.label, changed);
     segments(
         ui,
-        "Match",
+        tr!("Match"),
         &mut c.match_all,
-        &[(true, "all"), (false, "any")],
+        &[(true, tr!("all")), (false, tr!("any"))],
         changed,
     );
     ui.label(
-        egui::RichText::new(
-            "checks the file arriving on `in`: matches leave through `pass`, \
-             the rest through `fail`. Leave a side unconnected to skip those files.",
-        )
+        egui::RichText::new(tr!(
+            "checks the file arriving on `in`: matches leave through `pass`, the rest through `fail`. Leave a side unconnected to skip those files."
+        ))
         .small()
         .weak(),
     );
@@ -1814,7 +1834,7 @@ fn condition_form(ui: &mut egui::Ui, c: &mut ConditionConfig, changed: &mut bool
                                 }
                             }
                         });
-                    let hint = if rule.field.is_number() { "0" } else { "value" };
+                    let hint = if rule.field.is_number() { "0" } else { tr!("value") };
                     if ui
                         .add(
                             egui::TextEdit::singleline(&mut rule.value)
@@ -1831,7 +1851,7 @@ fn condition_form(ui: &mut egui::Ui, c: &mut ConditionConfig, changed: &mut bool
                     if ui
                         .add(
                             egui::TextEdit::singleline(&mut rule.key)
-                                .hint_text("metadata key, e.g. artist")
+                                .hint_text(tr!("metadata key, e.g. artist"))
                                 .desired_width(f32::INFINITY),
                         )
                         .changed()
@@ -1846,7 +1866,7 @@ fn condition_form(ui: &mut egui::Ui, c: &mut ConditionConfig, changed: &mut bool
         c.rules.remove(i);
         *changed = true;
     }
-    if ui.button("+ rule").clicked() {
+    if ui.button(tr!("+ rule")).clicked() {
         c.rules.push(CondRule {
             field: CondField::FileName,
             op: CondOp::Contains,
@@ -1857,7 +1877,7 @@ fn condition_form(ui: &mut egui::Ui, c: &mut ConditionConfig, changed: &mut bool
     }
     if c.rules.is_empty() {
         ui.label(
-            egui::RichText::new("no rules — every file takes the pass branch")
+            egui::RichText::new(tr!("no rules — every file takes the pass branch"))
                 .small()
                 .weak(),
         );
@@ -1945,7 +1965,7 @@ pub fn inspector_ui(
 
     match cfg {
         NodeConfig::Source(c) => {
-            ui.label("Folders / files");
+            ui.label(tr!("Folders / files"));
             let mut remove: Option<usize> = None;
             for (i, p) in c.paths.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
@@ -1962,7 +1982,7 @@ pub fn inspector_ui(
                 *changed = true;
             }
             ui.horizontal(|ui| {
-                if ui.button("+ Folder").clicked() {
+                if ui.button(tr!("+ Folder")).clicked() {
                     // Start where the node already points, so adding a second
                     // folder does not begin from the last place the OS dialog
                     // happened to be.
@@ -1976,10 +1996,10 @@ pub fn inspector_ui(
                         *changed = true;
                     }
                 }
-                if ui.button("+ Files").clicked() {
+                if ui.button(tr!("+ Files")).clicked() {
                     if let Some(files) = rfd::FileDialog::new()
-                        .set_title("Choose media files")
-                        .add_filter("Media", crate::source::EXT_LIST)
+                        .set_title(tr!("Choose media files"))
+                        .add_filter(tr!("Media"), crate::source::EXT_LIST)
                         .pick_files()
                     {
                         for f in files {
@@ -1990,23 +2010,26 @@ pub fn inspector_ui(
                 }
             });
             ui.add_space(4.0);
-            if ui.checkbox(&mut c.recursive, "Recursive (walkdir)").changed() {
-                *changed = true;
-            }
             if ui
-                .checkbox(&mut c.skip_own_outputs, "Skip previous fflow outputs")
+                .checkbox(&mut c.recursive, tr!("Recursive (walkdir)"))
                 .changed()
             {
                 *changed = true;
             }
-            text_row(ui, "Extensions", &mut c.extensions, changed);
+            if ui
+                .checkbox(&mut c.skip_own_outputs, tr!("Skip previous fflow outputs"))
+                .changed()
+            {
+                *changed = true;
+            }
+            text_row(ui, tr!("Extensions"), &mut c.extensions, changed);
             ui.label(
-                egui::RichText::new("comma separated, empty = every file")
+                egui::RichText::new(tr!("comma separated, empty = every file"))
                     .weak()
                     .small(),
             );
             ui.add_space(4.0);
-            if ui.button("🔍 Probe first file").clicked() {
+            if ui.button(tr!("🔍 Probe first file")).clicked() {
                 out.request_probe = true;
             }
         }
@@ -2026,10 +2049,9 @@ pub fn inspector_ui(
                 }
                 None => {
                     ui.label(
-                        egui::RichText::new(
-                            "Probe a file to see its tracks. Without a probe, track lists \
-                             fall back to plain ordinals.",
-                        )
+                        egui::RichText::new(tr!(
+                            "Probe a file to see its tracks. Without a probe, track lists fall back to plain ordinals."
+                        ))
                         .small()
                         .weak(),
                     );
@@ -2038,39 +2060,38 @@ pub fn inspector_ui(
             ui.add_space(6.0);
 
             // ---- video ----
-            track_mode_row(ui, "Video tracks", &mut c.video_mode, changed);
+            track_mode_row(ui, tr!("Video tracks"), &mut c.video_mode, changed);
             if c.video_mode == TrackMode::Select {
                 match probe.filter(|p| !p.video_streams.is_empty()) {
                     Some(p) => track_list(ui, &p.video_streams, true, &mut c.video_tracks, changed),
-                    None => ordinals_row(ui, "  ordinals", &mut c.video_tracks, changed),
+                    None => ordinals_row(ui, tr!("  ordinals"), &mut c.video_tracks, changed),
                 }
             }
             ui.add_space(4.0);
 
             // ---- audio ----
-            track_mode_row(ui, "Audio tracks", &mut c.audio_mode, changed);
+            track_mode_row(ui, tr!("Audio tracks"), &mut c.audio_mode, changed);
             if c.audio_mode == TrackMode::Select {
                 match probe.filter(|p| !p.audio_streams.is_empty()) {
                     Some(p) => track_list(ui, &p.audio_streams, false, &mut c.audio_tracks, changed),
-                    None => ordinals_row(ui, "  ordinals", &mut c.audio_tracks, changed),
+                    None => ordinals_row(ui, tr!("  ordinals"), &mut c.audio_tracks, changed),
                 }
             }
             ui.add_space(4.0);
 
             // ---- subtitles ----
-            track_mode_row(ui, "Subtitles", &mut c.subtitle_mode, changed);
+            track_mode_row(ui, tr!("Subtitles"), &mut c.subtitle_mode, changed);
             if c.subtitle_mode == TrackMode::Select {
                 match probe.filter(|p| !p.subtitle_streams.is_empty()) {
                     Some(p) => track_list(ui, &p.subtitle_streams, false, &mut c.subtitle_tracks, changed),
-                    None => ordinals_row(ui, "  ordinals", &mut c.subtitle_tracks, changed),
+                    None => ordinals_row(ui, tr!("  ordinals"), &mut c.subtitle_tracks, changed),
                 }
             }
             if c.subtitle_mode != TrackMode::Off {
                 ui.label(
-                    egui::RichText::new(
-                        "Subtitles are copied as-is (mov_text for mp4/mov). Containers \
-                         without subtitle support ignore this.",
-                    )
+                    egui::RichText::new(tr!(
+                        "Subtitles are copied as-is (mov_text for mp4/mov). Containers without subtitle support ignore this."
+                    ))
                     .small()
                     .weak(),
                 );
@@ -2095,7 +2116,7 @@ pub fn inspector_ui(
         NodeConfig::RawFilter(c) => raw_form(ui, c, changed),
         NodeConfig::Condition(c) => condition_form(ui, c, changed),
         NodeConfig::VideoEncoder(c) => {
-            combo_row(ui, "Codec", &mut c.codec, VIDEO_CODECS, changed);
+            combo_row(ui, tr!("Codec"), &mut c.codec, VIDEO_CODECS, changed);
 
             // Availability / hardware substitution feedback.
             if c.codec != "copy" {
@@ -2105,12 +2126,12 @@ pub fn inspector_ui(
                         if effective != c.codec {
                             ui.colored_label(
                                 OK,
-                                egui::RichText::new(format!("› runs as {}", effective)).small(),
+                                egui::RichText::new(tr!("› runs as {}", effective)).small(),
                             );
                         } else if !r.is_usable(&c.codec) {
                             ui.colored_label(
                                 ERR,
-                                egui::RichText::new(format!(
+                                egui::RichText::new(tr!(
                                     "⚠ {} is not available in this ffmpeg build",
                                     c.codec
                                 ))
@@ -2124,9 +2145,9 @@ pub fn inspector_ui(
                     None => {
                         ui.label(
                             egui::RichText::new(if crate::encoders::is_detecting() {
-                                "detecting encoders…"
+                                tr!("detecting encoders…")
                             } else {
-                                "encoder list unknown"
+                                tr!("encoder list unknown")
                             })
                             .small()
                             .weak(),
@@ -2134,12 +2155,10 @@ pub fn inspector_ui(
                     }
                 }
                 if ui
-                    .checkbox(&mut c.prefer_hardware, "Prefer hardware encoder")
-                    .on_hover_text(
-                        "Substitutes a verified hardware encoder (NVENC / QSV / AMF / \
-                         VideoToolbox) for the chosen software codec. Falls back when the \
-                         GPU cannot encode.",
-                    )
+                    .checkbox(&mut c.prefer_hardware, tr!("Prefer hardware encoder"))
+                    .on_hover_text(tr!(
+                        "Substitutes a verified hardware encoder (NVENC / QSV / AMF / VideoToolbox) for the chosen software codec. Falls back when the GPU cannot encode."
+                    ))
                     .changed()
                 {
                     *changed = true;
@@ -2147,11 +2166,14 @@ pub fn inspector_ui(
             }
 
             if c.codec != "copy" {
-                if ui.checkbox(&mut c.use_bitrate, "Target bitrate instead of CRF").changed() {
+                if ui
+                    .checkbox(&mut c.use_bitrate, tr!("Target bitrate instead of CRF"))
+                    .changed()
+                {
                     *changed = true;
                 }
                 if c.use_bitrate {
-                    text_row(ui, "Bitrate", &mut c.bitrate, changed);
+                    text_row(ui, tr!("Bitrate"), &mut c.bitrate, changed);
                 } else {
                     number_row_u32(ui, "CRF", &mut c.crf, 0..=63, changed);
                 }
@@ -2161,12 +2183,12 @@ pub fn inspector_ui(
                     crate::encoders::HwKind::Software
                 ) || crate::encoders::hw_kind(&effective) == crate::encoders::HwKind::Qsv
                 {
-                    combo_row(ui, "Preset", &mut c.preset, PRESETS, changed);
+                    combo_row(ui, tr!("Preset"), &mut c.preset, PRESETS, changed);
                 }
-                text_row(ui, "Pixel format", &mut c.pix_fmt, changed);
+                text_row(ui, tr!("Pixel format"), &mut c.pix_fmt, changed);
             } else {
                 ui.label(
-                    egui::RichText::new("stream copy: no re-encode")
+                    egui::RichText::new(tr!("stream copy: no re-encode"))
                         .weak()
                         .small(),
                 );
@@ -2174,7 +2196,7 @@ pub fn inspector_ui(
 
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
-                if ui.small_button("↻ detect encoders").clicked() {
+                if ui.small_button(tr!("↻ detect encoders")).clicked() {
                     out.redetect = true;
                 }
                 match reg {
@@ -2184,9 +2206,9 @@ pub fn inspector_ui(
                     None => {
                         ui.label(
                             egui::RichText::new(if crate::encoders::is_detecting() {
-                                "detecting…"
+                                tr!("detecting…")
                             } else {
-                                "not detected yet"
+                                tr!("not detected yet")
                             })
                             .small()
                             .weak(),
@@ -2196,34 +2218,36 @@ pub fn inspector_ui(
             });
         }
         NodeConfig::AudioEncoder(c) => {
-            combo_row(ui, "Codec", &mut c.codec, AUDIO_CODECS, changed);
+            combo_row(ui, tr!("Codec"), &mut c.codec, AUDIO_CODECS, changed);
             if c.codec != "copy" {
-                text_row(ui, "Bitrate", &mut c.bitrate, changed);
-                number_row_u32(ui, "Channels", &mut c.channels, 0..=8, changed);
-                number_row_u32(ui, "Sample rate", &mut c.sample_rate, 0..=192000, changed);
+                text_row(ui, tr!("Bitrate"), &mut c.bitrate, changed);
+                number_row_u32(ui, tr!("Channels"), &mut c.channels, 0..=8, changed);
+                number_row_u32(ui, tr!("Sample rate"), &mut c.sample_rate, 0..=192000, changed);
             } else {
                 ui.label(
-                    egui::RichText::new("stream copy: no re-encode")
+                    egui::RichText::new(tr!("stream copy: no re-encode"))
                         .weak()
                         .small(),
                 );
             }
         }
         NodeConfig::Package(c) => {
-            combo_row(ui, "Container", &mut c.container, CONTAINERS, changed);
+            combo_row(ui, tr!("Container"), &mut c.container, CONTAINERS, changed);
             if ui.checkbox(&mut c.movflags_faststart, "movflags +faststart").changed() {
                 *changed = true;
             }
             if ui.checkbox(&mut c.shortest, "-shortest").changed() {
                 *changed = true;
             }
-            text_row(ui, "Name template", &mut c.name_template, changed);
+            text_row(ui, tr!("Name template"), &mut c.name_template, changed);
             ui.label(
-                egui::RichText::new("tokens: {dir} {stem} {name} {ext} {index} {rel_dir}")
-                    .size(crate::theme::CAPTION)
-                    .color(crate::theme::p().faint),
+                egui::RichText::new(tr!(
+                    "tokens: {dir} {stem} {name} {ext} {index} {rel_dir}"
+                ))
+                .size(crate::theme::CAPTION)
+                .color(crate::theme::p().faint),
             );
-            crate::theme::field(ui, "Output dir", |ui| {
+            crate::theme::field(ui, tr!("Output dir"), |ui| {
                 if ui
                     .add(egui::TextEdit::singleline(&mut c.output_dir).desired_width(160.0))
                     .changed()
@@ -2238,12 +2262,16 @@ pub fn inspector_ui(
                 }
             });
             ui.add_space(4.0);
-            ui.label("Metadata");
+            ui.label(tr!("Metadata"));
             let mut remove: Option<usize> = None;
             for (i, m) in c.metadata.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     if ui
-                        .add(egui::TextEdit::singleline(&mut m.key).desired_width(90.0).hint_text("key"))
+                        .add(
+                            egui::TextEdit::singleline(&mut m.key)
+                                .desired_width(90.0)
+                                .hint_text(tr!("key")),
+                        )
                         .changed()
                     {
                         *changed = true;
@@ -2252,7 +2280,7 @@ pub fn inspector_ui(
                         .add(
                             egui::TextEdit::singleline(&mut m.value)
                                 .desired_width(130.0)
-                                .hint_text("value"),
+                                .hint_text(tr!("value")),
                         )
                         .changed()
                     {
@@ -2267,7 +2295,7 @@ pub fn inspector_ui(
                 c.metadata.remove(i);
                 *changed = true;
             }
-            if ui.small_button("+ metadata").clicked() {
+            if ui.small_button(tr!("+ metadata")).clicked() {
                 c.metadata.push(MetaEntry {
                     key: "title".into(),
                     value: String::new(),
@@ -2275,7 +2303,7 @@ pub fn inspector_ui(
                 *changed = true;
             }
             ui.add_space(4.0);
-            text_row(ui, "Extra args", &mut c.extra_args, changed);
+            text_row(ui, tr!("Extra args"), &mut c.extra_args, changed);
         }
     }
 
@@ -2295,6 +2323,29 @@ mod tests {
     use super::*;
     use crate::encoders::EncoderRegistry;
     use crate::probe::{ProbeInfo, StreamInfo};
+
+    /// Library search must work in both languages regardless of the active
+    /// one: a user who types 缩放 should find Scale, and one who types
+    /// "resize" should find it too.
+    #[test]
+    fn library_search_matches_both_languages() {
+        let scale = NodeKind::Scale;
+
+        crate::i18n::set(crate::i18n::Language::En);
+        assert!(scale.matches("scale"));
+        assert!(scale.matches("resize"));
+        assert!(scale.matches("缩放"), "Chinese query failed while in English");
+        assert!(!scale.matches("loudness"));
+
+        crate::i18n::set(crate::i18n::Language::Zh);
+        assert!(scale.matches("缩放"));
+        assert!(scale.matches("resize"), "English query failed while in Chinese");
+        assert!(!scale.matches("loudness"));
+        assert_eq!(scale.title(), "缩放");
+
+        crate::i18n::set(crate::i18n::Language::En);
+        assert_eq!(scale.title(), "Scale");
+    }
 
     fn probe(v: usize, a: usize, s: usize) -> ProbeInfo {
         ProbeInfo {

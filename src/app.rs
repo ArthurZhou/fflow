@@ -14,6 +14,8 @@ use crate::compiler::{self, Job};
 use crate::graph::nodes::{self, NodeConfig, NodeKind};
 use crate::graph::model;
 use crate::graph::{self, AllTemplates, FlowResponse, GraphCtx, GraphEditor, Settings, Workflow};
+use crate::i18n::{self, Language};
+use crate::tr;
 use crate::probe::{self, ProbeInfo};
 use crate::runner::{RunEvent, Runner};
 use crate::source;
@@ -48,11 +50,11 @@ pub enum TaskStatus {
 impl TaskStatus {
     fn label(&self) -> &'static str {
         match self {
-            TaskStatus::Queued => "queued",
-            TaskStatus::Running => "running",
-            TaskStatus::Done => "done",
-            TaskStatus::Failed => "failed",
-            TaskStatus::Cancelled => "cancelled",
+            TaskStatus::Queued => tr!("queued"),
+            TaskStatus::Running => tr!("running"),
+            TaskStatus::Done => tr!("done"),
+            TaskStatus::Failed => tr!("failed"),
+            TaskStatus::Cancelled => tr!("cancelled"),
         }
     }
 
@@ -173,6 +175,11 @@ impl FflowApp {
     /// UI test passes false to stay deterministic).
     pub fn build(egui_ctx: &egui::Context, autoload: bool) -> Self {
         let settings = load_settings();
+        let language = std::env::var("FFLOW_LANG")
+            .ok()
+            .and_then(|code| Language::from_code(&code))
+            .unwrap_or(settings.language);
+        i18n::set(language);
         crate::theme::apply(egui_ctx, settings.dark_mode);
 
         let mut ctx = GraphCtx::default();
@@ -260,6 +267,25 @@ impl FflowApp {
         // Rescaling around the centre leaves the graph off-screen when it was
         // not centred to begin with; recentre it so the shot shows the graph.
         self.center_graph();
+    }
+
+    /// Open the help window, so `--show-help` can capture its layout.
+    pub fn demo_help(&mut self) {
+        self.show_help = true;
+    }
+
+    /// Switch the UI language and relabel cards already on the canvas.
+    ///
+    /// Graph labels are snapshots taken when a node is created, so changing
+    /// the global language alone would leave every existing card in the old
+    /// language until the workflow was reloaded.
+    pub fn set_language(&mut self, language: Language) {
+        i18n::set(language);
+        self.settings.language = language;
+        for (_, node) in self.editor.graph.nodes.iter_mut() {
+            let label = node.user_data.kind().title().to_string();
+            node.label = label;
+        }
     }
 
     /// Zoom the canvas without touching the pan.
@@ -446,7 +472,7 @@ impl FflowApp {
             .as_ref()
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".to_string())
+            .unwrap_or_else(|| tr!("untitled").to_string())
     }
 
     fn notify(&mut self, msg: impl Into<String>) {
@@ -641,7 +667,7 @@ impl FflowApp {
                 }
                 Err(e) => {
                     self.probe_failed.insert(key);
-                    self.notify_err(format!("probe failed: {}", e));
+                    self.notify_err(tr!("probe failed: {}", e));
                 }
             }
         }
@@ -705,9 +731,11 @@ impl FflowApp {
                     failed,
                     cancelled,
                 } => {
-                    self.notify(format!(
+                    self.notify(tr!(
                         "batch finished — {} ok, {} failed, {} cancelled",
-                        ok, failed, cancelled
+                        ok,
+                        failed,
+                        cancelled
                     ));
                 }
             }
@@ -759,7 +787,7 @@ impl FflowApp {
                 }
             }
         }
-        self.notify("added dropped path(s) to the Source node");
+        self.notify(tr!("added dropped path(s) to the Source node"));
         self.mark_files_dirty();
     }
 
@@ -767,14 +795,14 @@ impl FflowApp {
 
     fn compile_current(&self) -> Result<Job, String> {
         let Some(file) = self.files.get(self.preview_index) else {
-            return Err("no input file — pick a root folder first".into());
+            return Err(tr!("no input file — pick a root folder first").into());
         };
         let key = file.to_string_lossy().to_string();
         let Some(info) = self.probes.get(&key) else {
             return Err(if self.probe_failed.contains(&key) {
-                format!("{} could not be read by ffprobe", source::short_name(file))
+                tr!("{} could not be read by ffprobe", source::short_name(file))
             } else {
-                "probing…".into()
+                tr!("probing…").into()
             });
         };
         compiler::compile(
@@ -785,7 +813,7 @@ impl FflowApp {
             self.root.as_deref(),
         )
         .map_err(|e| match compiler::skipped_reason(&e) {
-            Some(why) => format!("skipped — {}", why),
+            Some(why) => tr!("skipped — {}", why),
             None => format!("{:#}", e),
         })
     }
@@ -795,7 +823,7 @@ impl FflowApp {
             return;
         }
         if self.files.is_empty() {
-            self.notify_err("no input files — choose a root folder first");
+            self.notify_err(tr!("no input files — choose a root folder first"));
             return;
         }
         // A file ffprobe already rejected is not "still probing": waiting for
@@ -809,7 +837,7 @@ impl FflowApp {
             })
             .count();
         if pending > 0 {
-            self.notify_err(format!("still probing {} file(s), try again in a moment", pending));
+            self.notify_err(tr!("still probing {} file(s), try again in a moment", pending));
             self.ensure_probes();
             return;
         }
@@ -820,7 +848,7 @@ impl FflowApp {
         for (i, file) in self.files.clone().iter().enumerate() {
             let key = file.to_string_lossy().to_string();
             let Some(info) = self.probes.get(&key).cloned() else {
-                errors.push(format!(
+                errors.push(tr!(
                     "{}: unreadable — ffprobe could not open it",
                     source::short_name(file)
                 ));
@@ -839,7 +867,7 @@ impl FflowApp {
                 errors
                     .first()
                     .cloned()
-                    .unwrap_or_else(|| "nothing to run".into()),
+                    .unwrap_or_else(|| tr!("nothing to run").into()),
             );
             return;
         }
@@ -864,10 +892,10 @@ impl FflowApp {
             self.notify_err(e.clone());
         }
         if skipped > 0 {
-            self.notify(format!("{} file(s) skipped by a condition", skipped));
+            self.notify(tr!("{} file(s) skipped by a condition", skipped));
         }
         self.runner.start(jobs, self.settings.concurrency);
-        self.notify(format!("started {} job(s)", self.tasks.len()));
+        self.notify(tr!("started {} job(s)", self.tasks.len()));
     }
 
     fn save_workflow(&mut self) {
@@ -885,9 +913,9 @@ impl FflowApp {
                 self.workflow_path = Some(path.clone());
                 self.settings.last_workflow = path.to_string_lossy().to_string();
                 save_settings(&self.settings);
-                self.notify(format!("saved {}", path.display()));
+                self.notify(tr!("saved {}", path.display()));
             }
-            Err(e) => self.notify_err(format!("save failed: {:#}", e)),
+            Err(e) => self.notify_err(tr!("save failed: {}", format!("{:#}", e))),
         }
     }
 
@@ -913,9 +941,9 @@ impl FflowApp {
                 self.settings.last_workflow = path.to_string_lossy().to_string();
                 self.root = workflow_root(&self.editor);
                 self.mark_files_dirty();
-                self.notify(format!("loaded {}", path.display()));
+                self.notify(tr!("loaded {}", path.display()));
             }
-            Err(e) => self.notify_err(format!("load failed: {:#}", e)),
+            Err(e) => self.notify_err(tr!("load failed: {}", format!("{:#}", e))),
         }
     }
 
@@ -968,17 +996,17 @@ impl FflowApp {
                     // -- run / cancel --------------------------------------
                     let running = self.runner.is_running();
                     ui.add_enabled_ui(!running, |ui| {
-                        if theme::primary_button(ui, "▶  Run")
-                            .on_hover_text("Compile every file and run the batch")
+                        if theme::primary_button(ui, format!("▶  {}", tr!("Run")))
+                            .on_hover_text(tr!("Compile every file and run the batch"))
                             .clicked()
                         {
                             self.start_run();
                         }
                     });
                     ui.add_enabled_ui(running, |ui| {
-                        if theme::danger_button(ui, "■  Cancel").clicked() {
+                        if theme::danger_button(ui, format!("■  {}", tr!("Cancel"))).clicked() {
                             self.runner.cancel_all();
-                            self.notify("cancelling…");
+                            self.notify(tr!("cancelling…"));
                         }
                     });
 
@@ -987,26 +1015,26 @@ impl FflowApp {
                     ui.add_space(2.0);
 
                     // -- workflow files ------------------------------------
-                    if theme::ghost_button(ui, "Save")
-                        .on_hover_text("Save workflow")
+                    if theme::ghost_button(ui, tr!("Save"))
+                        .on_hover_text(tr!("Save workflow"))
                         .clicked()
                     {
                         self.save_workflow();
                     }
-                    if theme::ghost_button(ui, "Save as…")
-                        .on_hover_text("Save workflow to a new JSON file")
+                    if theme::ghost_button(ui, tr!("Save as…"))
+                        .on_hover_text(tr!("Save workflow to a new JSON file"))
                         .clicked()
                     {
                         self.save_workflow_as();
                     }
-                    if theme::ghost_button(ui, "Load")
-                        .on_hover_text("Load workflow")
+                    if theme::ghost_button(ui, tr!("Load"))
+                        .on_hover_text(tr!("Load workflow"))
                         .clicked()
                     {
                         self.load_workflow();
                     }
-                    if theme::ghost_button(ui, "New")
-                        .on_hover_text("New workflow from the default template")
+                    if theme::ghost_button(ui, tr!("New"))
+                        .on_hover_text(tr!("New workflow from the default template"))
                         .clicked()
                     {
                         self.new_workflow();
@@ -1033,16 +1061,23 @@ impl FflowApp {
     fn toolbar_right(&mut self, ui: &mut egui::Ui) {
         let pal = theme::p();
         theme::right_aligned(ui, |ui| {
-            if theme::ghost_button(ui, "?").on_hover_text("Help").clicked() {
+            if theme::ghost_button(ui, i18n::current().switch_label())
+                .on_hover_text(tr!("Switch language"))
+                .clicked()
+            {
+                self.set_language(i18n::current().other());
+                save_settings(&self.settings);
+            }
+            if theme::ghost_button(ui, "?").on_hover_text(tr!("Help")).clicked() {
                 self.show_help = !self.show_help;
             }
             let theme_label = if self.settings.dark_mode {
-                "Dark"
+                tr!("Dark")
             } else {
-                "Light"
+                tr!("Light")
             };
             if theme::ghost_button(ui, theme_label)
-                .on_hover_text("Switch between the dark and light palettes")
+                .on_hover_text(tr!("Switch between the dark and light palettes"))
                 .clicked()
             {
                 self.settings.dark_mode = !self.settings.dark_mode;
@@ -1050,12 +1085,12 @@ impl FflowApp {
                 save_settings(&self.settings);
             }
             let preview_label = if self.show_preview {
-                "Preview [on]"
+                tr!("Preview [on]")
             } else {
-                "Preview [off]"
+                tr!("Preview [off]")
             };
             if theme::ghost_button(ui, preview_label)
-                .on_hover_text("Show the generated ffmpeg command")
+                .on_hover_text(tr!("Show the generated ffmpeg command"))
                 .clicked()
             {
                 self.show_preview = !self.show_preview;
@@ -1070,25 +1105,25 @@ impl FflowApp {
                             .range(1..=16)
                             .speed(0.1),
                     )
-                    .on_hover_text(
-                        "How many files are processed at the same time",
-                    );
+                    .on_hover_text(tr!("How many files are processed at the same time"));
                     ui.label(
-                        egui::RichText::new("Parallel").size(theme::BODY).color(pal.dim),
+                        egui::RichText::new(tr!("Parallel"))
+                            .size(theme::BODY)
+                            .color(pal.dim),
                     );
                 });
             });
             ui.add_space(2.0);
             if let Some(err) = &self.tools_error {
-                theme::pill(ui, "ffmpeg missing", pal.err)
+                theme::pill(ui, tr!("ffmpeg missing"), pal.err)
                     .on_hover_text(err.clone());
             }
             if crate::encoders::is_detecting() {
-                theme::pill(ui, "detecting…", pal.warn);
+                theme::pill(ui, tr!("detecting…"), pal.warn);
             } else if let Some(reg) = crate::encoders::snapshot() {
                 let hw = reg.working_hardware();
                 if hw.is_empty() {
-                    theme::pill(ui, "software encode", pal.faint)
+                    theme::pill(ui, tr!("software encode"), pal.faint)
                         .on_hover_text(reg.summary());
                 } else {
                     let text = if hw.len() == 1 {
@@ -1099,7 +1134,7 @@ impl FflowApp {
                     theme::pill(ui, text, pal.ok).on_hover_text(reg.summary());
                 }
             }
-            theme::pill(ui, format!("{} files", self.files.len()), pal.file);
+            theme::pill(ui, tr!("{} files", self.files.len()), pal.file);
         });
     }
 
@@ -1141,7 +1176,7 @@ impl FflowApp {
                 self.panel_rects.files = files.response.rect;
 
                 ui.label(
-                    egui::RichText::new("NODE LIBRARY")
+                    egui::RichText::new(tr!("NODE LIBRARY"))
                         .size(theme::CAPTION)
                         .strong()
                         .color(pal.faint),
@@ -1149,10 +1184,10 @@ impl FflowApp {
                 ui.add_space(3.0);
                 ui.add(
                     egui::TextEdit::singleline(&mut self.library_filter)
-                        .hint_text("search nodes…")
+                        .hint_text(tr!("search nodes…"))
                         .desired_width(f32::INFINITY),
                 )
-                .on_hover_text("Click a node to add it, or drag it onto the canvas");
+                .on_hover_text(tr!("Click a node to add it, or drag it onto the canvas"));
 
                 let filter = self.library_filter.trim().to_ascii_lowercase();
                 // Group up front so empty categories disappear while searching.
@@ -1182,7 +1217,7 @@ impl FflowApp {
                         if groups.is_empty() {
                             ui.add_space(6.0);
                             ui.label(
-                                egui::RichText::new(format!("no card matches “{filter}”"))
+                                egui::RichText::new(tr!("no card matches “{}”", filter))
                                     .size(theme::CAPTION)
                                     .color(pal.faint),
                             );
@@ -1280,7 +1315,7 @@ impl FflowApp {
         let pal = theme::p();
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("FILES")
+                egui::RichText::new(tr!("FILES"))
                     .size(theme::CAPTION)
                     .strong()
                     .color(pal.faint),
@@ -1288,8 +1323,8 @@ impl FflowApp {
             ui.add_space(4.0);
             theme::pill(ui, format!("{}", self.files.len()), pal.file);
             theme::right_aligned(ui, |ui| {
-                if theme::ghost_button(ui, "rescan")
-                    .on_hover_text("Re-scan the Source node")
+                if theme::ghost_button(ui, tr!("rescan"))
+                    .on_hover_text(tr!("Re-scan the Source node"))
                     .clicked()
                 {
                     self.mark_files_dirty();
@@ -1301,8 +1336,8 @@ impl FflowApp {
             theme::empty_state(
                 ui,
                 theme::Icon::Folder,
-                "No files yet",
-                "Point the Source node at a folder",
+                tr!("No files yet"),
+                tr!("Point the Source node at a folder"),
                 &[],
             );
             return;
@@ -1353,7 +1388,7 @@ impl FflowApp {
                                 );
                                 let meta = match probe {
                                     Some(p) => p.streams_summary(),
-                                    None => "probing…".to_string(),
+                                    None => tr!("probing…").to_string(),
                                 };
                                 ui.allocate_ui_with_layout(
                                     egui::vec2(meta_w, line),
@@ -1397,7 +1432,7 @@ impl FflowApp {
             )
             .show(ctx, |ui| {
                 ui.label(
-                    egui::RichText::new("INSPECTOR")
+                    egui::RichText::new(tr!("INSPECTOR"))
                         .size(theme::CAPTION)
                         .strong()
                         .color(pal.faint),
@@ -1410,13 +1445,13 @@ impl FflowApp {
                         theme::empty_state(
                             ui,
                             theme::Icon::Pointer,
-                            "Nothing selected",
-                            "Click a node on the canvas to edit it",
+                            tr!("Nothing selected"),
+                            tr!("Click a node on the canvas to edit it"),
                             &[
-                                ("click", "select / edit"),
-                                ("drag", "box-select many"),
-                                ("wheel", "zoom the canvas"),
-                                ("Del", "delete selection"),
+                                ("click", tr!("select / edit")),
+                                ("drag", tr!("box-select many")),
+                                ("wheel", tr!("zoom the canvas")),
+                                ("Del", tr!("delete selection")),
                             ],
                         );
                     }
@@ -1453,8 +1488,8 @@ impl FflowApp {
                                 );
                             });
                             theme::right_aligned(ui, |ui| {
-                                if theme::danger_button(ui, "Delete")
-                                    .on_hover_text("Remove this node (Del)")
+                                if theme::danger_button(ui, tr!("Delete"))
+                                    .on_hover_text(tr!("Remove this node (Del)"))
                                     .clicked()
                                 {
                                     delete_me = true;
@@ -1505,13 +1540,13 @@ impl FflowApp {
                                 }
                                 if outcome.redetect {
                                     crate::encoders::redetect();
-                                    self.notify("re-detecting encoders…");
+                                    self.notify(tr!("re-detecting encoders…"));
                                 }
                             });
 
                         // -- compiled result for this node -----------------
                         theme::rule(ui);
-                        theme::section(ui, "Compiled output");
+                        theme::section(ui, tr!("Compiled output"));
                         let job = self.compile_current();
                         match job {
                             Ok(job) => {
@@ -1555,8 +1590,8 @@ impl FflowApp {
                         theme::empty_state(
                             ui,
                             theme::Icon::Layers,
-                            &format!("{n} nodes selected"),
-                            "Select a single node to edit its properties",
+                            &tr!("{} nodes selected", n),
+                            tr!("Select a single node to edit its properties"),
                             &[],
                         );
                     }
@@ -1599,34 +1634,34 @@ impl FflowApp {
 
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new("TASKS")
+                        egui::RichText::new(tr!("TASKS"))
                             .size(theme::CAPTION)
                             .strong()
                             .color(pal.faint),
                     );
                     if total == 0 {
                         ui.label(
-                            egui::RichText::new("no jobs yet")
+                            egui::RichText::new(tr!("no jobs yet"))
                                 .size(theme::SMALL)
                                 .color(pal.faint),
                         );
                     } else {
                         if running > 0 {
-                            theme::pill(ui, format!("{} running", running), pal.accent);
+                            theme::pill(ui, tr!("{} running", running), pal.accent);
                         }
                         if done > 0 {
-                            theme::pill(ui, format!("{} done", done), pal.ok);
+                            theme::pill(ui, tr!("{} done", done), pal.ok);
                         }
                         if failed > 0 {
-                            theme::pill(ui, format!("{} failed", failed), pal.err);
+                            theme::pill(ui, tr!("{} failed", failed), pal.err);
                         }
                         if cancelled > 0 {
-                            theme::pill(ui, format!("{} cancelled", cancelled), pal.warn);
+                            theme::pill(ui, tr!("{} cancelled", cancelled), pal.warn);
                         }
                     }
 
                     theme::right_aligned(ui, |ui| {
-                        if total > 0 && theme::ghost_button(ui, "Clear").clicked() {
+                        if total > 0 && theme::ghost_button(ui, tr!("Clear")).clicked() {
                             self.tasks.clear();
                         }
                         if total > 0 {
@@ -1644,7 +1679,7 @@ impl FflowApp {
                                 170.0,
                                 overall,
                                 color,
-                                format!("{:.0}% overall", overall),
+                                tr!("{}% overall", format!("{:.0}", overall)),
                             );
                         }
                     });
@@ -1654,11 +1689,11 @@ impl FflowApp {
                     theme::empty_state(
                         ui,
                         theme::Icon::Play,
-                        "Nothing running",
-                        "Run compiles every file the Source node found",
+                        tr!("Nothing running"),
+                        tr!("Run compiles every file the Source node found"),
                         &[
-                            ("Run", "start the batch"),
-                            ("open", "reveal output"),
+                            (tr!("Run"), tr!("start the batch")),
+                            (tr!("open"), tr!("reveal output")),
                         ],
                     );
                     return;
@@ -1683,10 +1718,10 @@ impl FflowApp {
                         );
                     };
                     head(ui, "", 12.0);
-                    head(ui, "FILE", 240.0);
-                    head(ui, "PROGRESS", 200.0);
-                    head(ui, "STATUS", 70.0);
-                    head(ui, "DETAIL", 220.0);
+                    head(ui, tr!("FILE"), 240.0);
+                    head(ui, tr!("PROGRESS"), 200.0);
+                    head(ui, tr!("STATUS"), 70.0);
+                    head(ui, tr!("DETAIL"), 220.0);
                 });
 
                 egui::ScrollArea::vertical()
@@ -1763,7 +1798,11 @@ impl FflowApp {
                                 });
 
                                 if task.error.is_some() {
-                                    let label = if task.expanded { "hide" } else { "error" };
+                                    let label = if task.expanded {
+                                        tr!("hide")
+                                    } else {
+                                        tr!("error")
+                                    };
                                     if theme::ghost_button(ui, label).clicked() {
                                         task.expanded = !task.expanded;
                                     }
@@ -1771,8 +1810,8 @@ impl FflowApp {
                                 if matches!(
                                     task.status,
                                     TaskStatus::Done | TaskStatus::Failed
-                                ) && theme::ghost_button(ui, "open")
-                                    .on_hover_text("Reveal the output folder")
+                                ) && theme::ghost_button(ui, tr!("open"))
+                                    .on_hover_text(tr!("Reveal the output folder"))
                                     .clicked()
                                 {
                                     open_folder =
@@ -1832,7 +1871,7 @@ impl FflowApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new("COMMAND PREVIEW")
+                        egui::RichText::new(tr!("COMMAND PREVIEW"))
                             .size(theme::CAPTION)
                             .strong()
                             .color(pal.faint),
@@ -1879,20 +1918,20 @@ impl FflowApp {
                         );
                     } else {
                         ui.label(
-                            egui::RichText::new("no files")
+                            egui::RichText::new(tr!("no files"))
                                 .size(theme::SMALL)
                                 .color(pal.faint),
                         );
                     }
 
                     theme::right_aligned(ui, |ui| {
-                        if theme::ghost_button(ui, "Copy")
-                            .on_hover_text("Copy the full command line")
+                        if theme::ghost_button(ui, tr!("Copy"))
+                            .on_hover_text(tr!("Copy the full command line"))
                             .clicked()
                         {
                             if let Ok(job) = self.compile_current() {
                                 ui.ctx().copy_text(job.display.clone());
-                                self.notify("command copied");
+                                self.notify(tr!("command copied"));
                             }
                         }
                     });
@@ -1919,7 +1958,7 @@ impl FflowApp {
                                 if self.settings.panels.preview >= 140.0 {
                                     ui.horizontal(|ui| {
                                         ui.label(
-                                            egui::RichText::new("OUTPUT")
+                                            egui::RichText::new(tr!("OUTPUT"))
                                                 .size(theme::CAPTION)
                                                 .strong()
                                                 .color(pal.faint),
@@ -2165,13 +2204,13 @@ impl FflowApp {
                         let in_typ = self.editor.graph.get_input(input).typ;
                         self.editor.graph.remove_connection(input, output);
                         if out_typ != in_typ {
-                            self.notify_err(format!(
+                            self.notify_err(tr!(
                                 "connection rejected: {} » {} (type mismatch)",
                                 out_typ.name(),
                                 in_typ.name()
                             ));
                         } else if graph::would_create_cycle(&self.editor.graph, output, input) {
-                            self.notify_err("connection rejected: this would create a cycle");
+                            self.notify_err(tr!("connection rejected: this would create a cycle"));
                         } else {
                             self.editor.graph.add_connection(output, input, input_hook);
                         }
@@ -2189,7 +2228,7 @@ impl FflowApp {
             // Defence in depth: never keep a type-invalid edge around.
             for (input, output, why) in graph::invalid_connections(&self.editor.graph) {
                 self.editor.graph.remove_connection(input, output);
-                self.notify_err(format!("removed invalid connection: {}", why));
+                self.notify_err(tr!("removed invalid connection: {}", why));
             }
 
             // Close-button backdrop.
@@ -2322,7 +2361,7 @@ impl FflowApp {
                                     egui::RichText::new("·").size(theme::CAPTION).color(pal.faint),
                                 );
                                 ui.label(
-                                    egui::RichText::new(format!("{nodes} nodes"))
+                                    egui::RichText::new(tr!("{} nodes", nodes))
                                         .size(theme::CAPTION)
                                         .color(pal.faint),
                                 );
@@ -2346,40 +2385,40 @@ impl FflowApp {
             return;
         }
         let mut open = self.show_help;
-        egui::Window::new("fflow — how it works")
+        egui::Window::new(tr!("fflow — how it works"))
             .open(&mut open)
             .default_width(520.0)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.label(egui::RichText::new("Pipeline").strong());
-                    ui.label(
-                        "Source » Demux » (video / audio chains) » Package. Every file found by \
-                         the Source node is compiled into its own ffmpeg command.",
-                    );
+                    ui.label(egui::RichText::new(tr!("Pipeline")).strong());
+                    ui.label(tr!(
+                        "Source » Demux » (video / audio chains) » Package. Every file found by the Source node is compiled into its own ffmpeg command."
+                    ));
                     ui.add_space(6.0);
-                    ui.label(egui::RichText::new("Ports").strong());
-                    ui.label(
-                        "Blue = File, orange = Video, green = Audio. Connections between different \
-                         port types are refused immediately.",
-                    );
+                    ui.label(egui::RichText::new(tr!("Ports")).strong());
+                    ui.label(tr!(
+                        "Blue = File, orange = Video, green = Audio. Connections between different port types are refused immediately."
+                    ));
                     ui.add_space(6.0);
-                    ui.label(egui::RichText::new("Shortcuts").strong());
-                    ui.label("• drag empty canvas: box select");
-                    ui.label("• Del / Backspace: delete the selected node · Esc: deselect");
-                    ui.label("• middle mouse / cmd+drag: pan · wheel: zoom");
-                    ui.label("• right click canvas: quick-add node menu");
-                    ui.label("• drag a connection off its input port: disconnect");
+                    ui.label(egui::RichText::new(tr!("Shortcuts")).strong());
+                    ui.label(tr!("• drag empty canvas: box select"));
+                    ui.label(tr!(
+                        "• Del / Backspace: delete the selected node · Esc: deselect"
+                    ));
+                    ui.label(tr!("• middle mouse / cmd+drag: pan · wheel: zoom"));
+                    ui.label(tr!("• right click canvas: quick-add node menu"));
+                    ui.label(tr!("• drag a connection off its input port: disconnect"));
                     ui.add_space(6.0);
-                    ui.label(egui::RichText::new("Templates").strong());
+                    ui.label(egui::RichText::new(tr!("Templates")).strong());
                     ui.label("{dir} {stem} {name} {ext} {index} {rel_dir}");
                     ui.add_space(6.0);
-                    ui.label(egui::RichText::new("Binaries").strong());
+                    ui.label(egui::RichText::new(tr!("Binaries")).strong());
                     ui.label(format!(
                         "ffmpeg: {} · ffprobe: {}",
                         probe::ffmpeg_bin(),
                         probe::ffprobe_bin()
                     ));
-                    ui.label("Override with FFLOW_FFMPEG / FFLOW_FFPROBE.");
+                    ui.label(tr!("Override with FFLOW_FFMPEG / FFLOW_FFPROBE."));
                 });
             });
         self.show_help = open;
@@ -3310,6 +3349,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Switching language must relabel the cards already on the canvas.
+    ///
+    /// `Node::label` is a snapshot taken when the node is created, so without
+    /// an explicit pass the graph would keep its old titles until reloaded.
+    #[test]
+    fn switching_language_relabels_existing_nodes() {
+        let mut h = Harness::new();
+        let node = h.app.editor.node_order[0];
+        let english = h.app.editor.graph.nodes[node].label.clone();
+
+        h.app.set_language(i18n::Language::Zh);
+        let chinese = h.app.editor.graph.nodes[node].label.clone();
+        assert_ne!(english, chinese, "label did not change: {english}");
+        assert!(
+            chinese.chars().any(|c| !c.is_ascii()),
+            "label is not localised: {chinese}"
+        );
+        assert_eq!(h.app.settings.language, i18n::Language::Zh);
+
+        h.app.set_language(i18n::Language::En);
+        assert_eq!(h.app.editor.graph.nodes[node].label, english);
     }
 
     /// Each handle must sit on the edge it resizes.

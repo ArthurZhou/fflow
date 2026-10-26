@@ -250,6 +250,8 @@ pub struct Options {
     /// Populate the task list with sample jobs (one per status) so the task
     /// panel can be inspected without running a real batch.
     pub demo_tasks: bool,
+    /// Open the help window before the capture (used to check its layout).
+    pub show_help: bool,
     /// Force the light palette, to check that both themes lay out correctly.
     pub light: bool,
     /// Load this workflow file before rendering.
@@ -293,6 +295,9 @@ pub fn render(opts: &Options) -> anyhow::Result<()> {
     app.demo_setup(opts.dir.as_deref(), opts.probe.as_deref())?;
     if opts.demo_tasks {
         app.demo_tasks();
+    }
+    if opts.show_help {
+        app.demo_help();
     }
     if let Some(i) = opts.select {
         anyhow::ensure!(app.select_node(i), "no node #{i} in the graph");
