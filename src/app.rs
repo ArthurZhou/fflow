@@ -813,6 +813,51 @@ impl FflowApp {
 
     // -- compile / run ----------------------------------------------------
 
+    /// Wire two ports together, or explain why not.
+    ///
+    /// Every rule that can be decided without a file is enforced here, at the
+    /// moment the wire is drawn — a graph that cannot be compiled should not be
+    /// buildable in the first place. What remains (a Package that writes the
+    /// same path as another one, a Demux left unconnected) depends on node
+    /// settings rather than on the connection, so it stays a compile-time
+    /// report.
+    fn connect_ports(
+        &mut self,
+        output: egui_node_graph2::OutputId,
+        input: egui_node_graph2::InputId,
+        input_hook: usize,
+    ) -> Result<(), String> {
+        let out_typ = self.editor.graph.get_output(output).typ;
+        let in_typ = self.editor.graph.get_input(input).typ;
+        // `add_connection` replaces whatever was there on a single-connection
+        // port, so drop the old wire first and treat this as a fresh decision.
+        self.editor.graph.remove_connection(input, output);
+        if out_typ != in_typ {
+            return Err(tr!(
+                "connection rejected: {} » {} (type mismatch)",
+                out_typ.name(),
+                in_typ.name()
+            )
+            .to_string());
+        }
+        if graph::would_create_cycle(&self.editor.graph, output, input) {
+            return Err(tr!("connection rejected: this would create a cycle").to_string());
+        }
+
+        // Only *new* problems refuse the wire: a workflow loaded from an older
+        // file may already contain one, and it still has to be editable.
+        let before = compiler::wiring_problems(&self.editor.graph);
+        self.editor.graph.add_connection(output, input, input_hook);
+        let fresh = compiler::wiring_problems(&self.editor.graph)
+            .into_iter()
+            .find(|p| !before.contains(p));
+        if let Some(problem) = fresh {
+            self.editor.graph.remove_connection(input, output);
+            return Err(tr!("connection rejected: {}", problem.message).to_string());
+        }
+        Ok(())
+    }
+
     /// What the graph does with the file selected in the sidebar, computed
     /// without running anything.
     ///
@@ -828,7 +873,13 @@ impl FflowApp {
         }
         let file = self.files.get(self.preview_index)?;
         let info = self.probes.get(&file.to_string_lossy().to_string())?;
-        Some(compiler::trace(&self.editor.graph, file, info))
+        Some(compiler::trace(
+            &self.editor.graph,
+            file,
+            info,
+            self.preview_index + 1,
+            self.root.as_deref(),
+        ))
     }
 
     fn compile_current(&self) -> Result<Job, String> {
@@ -2236,10 +2287,12 @@ impl FflowApp {
                     self.editor.pan_zoom.zoom,
                 );
                 let selected_before = self.editor.selected_nodes.clone();
-                egui_node_graph2::set_flow_highlight(
-                    flow.as_ref()
-                        .map(|t| t.links.iter().copied().collect::<Vec<_>>()),
-                );
+                // A graph that cannot compile has no flow to show: dimming
+                // every wire would say "this file goes nowhere", when the real
+                // answer is "this wiring does not run at all".
+                egui_node_graph2::set_flow_highlight(flow.as_ref().filter(|t| !t.failed()).map(
+                    |t| t.links.iter().copied().collect::<Vec<_>>(),
+                ));
                 let response = self
                     .editor
                     .draw_graph_editor(ui, AllTemplates, &mut self.ctx, vec![]);
@@ -2287,19 +2340,8 @@ impl FflowApp {
                         input,
                         input_hook,
                     } => {
-                        let out_typ = self.editor.graph.get_output(output).typ;
-                        let in_typ = self.editor.graph.get_input(input).typ;
-                        self.editor.graph.remove_connection(input, output);
-                        if out_typ != in_typ {
-                            self.notify_err(tr!(
-                                "connection rejected: {} » {} (type mismatch)",
-                                out_typ.name(),
-                                in_typ.name()
-                            ));
-                        } else if graph::would_create_cycle(&self.editor.graph, output, input) {
-                            self.notify_err(tr!("connection rejected: this would create a cycle"));
-                        } else {
-                            self.editor.graph.add_connection(output, input, input_hook);
+                        if let Err(why) = self.connect_ports(output, input, input_hook) {
+                            self.notify_err(why);
                         }
                     }
                     NodeResponse::DeleteNodeFull { node, .. } => {
@@ -2338,13 +2380,15 @@ impl FflowApp {
             // Painted after the ✕ (a dimmed card dims as a whole) but before
             // the selection ring, which has to stay legible on a dimmed card.
             if let Some(t) = &flow {
-                for (node, rect) in &node_rects {
-                    if !t.nodes.contains(node) {
-                        ui.painter().rect_filled(
-                            *rect,
-                            egui::Rounding::same(theme::ROUND_CARD * zoom),
-                            pal.scrim,
-                        );
+                if !t.failed() {
+                    for (node, rect) in &node_rects {
+                        if !t.nodes.contains(node) {
+                            ui.painter().rect_filled(
+                                *rect,
+                                egui::Rounding::same(theme::ROUND_CARD * zoom),
+                                pal.scrim,
+                            );
+                        }
                     }
                 }
             }
@@ -2524,7 +2568,13 @@ impl FflowApp {
                             ui.painter().circle_filled(
                                 dot.center(),
                                 3.0,
-                                if t.flows() { pal.ok } else { pal.warn },
+                                if t.failed() {
+                                    pal.err
+                                } else if t.flows() {
+                                    pal.ok
+                                } else {
+                                    pal.warn
+                                },
                             );
                             ui.label(
                                 egui::RichText::new(name)
@@ -2552,7 +2602,20 @@ impl FflowApp {
                             });
                         });
                         ui.add_space(2.0);
-                        if t.outputs.is_empty() {
+                        // A broken workflow is not a file-level verdict: say so
+                        // before any "no output takes this file", which would
+                        // send you looking at the Condition instead of the
+                        // wiring.
+                        if let Some(why) = &t.error {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(tr!("cannot compile: {}", why))
+                                        .size(theme::CAPTION)
+                                        .color(pal.err),
+                                )
+                                .wrap(),
+                            );
+                        } else if t.outputs.is_empty() {
                             ui.label(
                                 egui::RichText::new(tr!("no output takes this file"))
                                     .size(theme::CAPTION)
@@ -2635,7 +2698,7 @@ impl FflowApp {
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new(tr!("Ports")).strong());
                     ui.label(tr!(
-                        "Blue = File, orange = Video, green = Audio. Connections between different port types are refused immediately."
+                        "Blue = File, orange = Video, green = Audio. Connections between different port types are refused immediately, and so is any wire that would make the workflow uncompilable — two Demuxes into one Package, or two branches that can both reach the same input."
                     ));
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new(tr!("Flow preview")).strong());
@@ -4022,6 +4085,59 @@ mod tests {
         h.key(egui::Key::Escape);
         assert!(!h.app.flow_preview, "Esc should clear the flow preview");
         assert!(h.app.flow_trace().is_none());
+    }
+
+    /// A wire that would make the graph uncompilable is refused where it is
+    /// drawn — a second Demux feeding the same Package is the case that used to
+    /// be accepted and then failed at compile time.
+    #[test]
+    fn connecting_a_second_demux_to_a_package_is_refused() {
+        let mut h = Harness::new();
+        let src = graph::source_nodes(&h.app.editor.graph)[0];
+        let pkg = graph::package_nodes(&h.app.editor.graph)[0];
+        let demux2 = graph::add_node(
+            &mut h.app.editor,
+            &mut h.app.ctx,
+            NodeKind::Demux,
+            egui::pos2(20.0, 20.0),
+        );
+
+        let out_of = |graph: &graph::FGraph, node, port: &str| {
+            graph.nodes[node]
+                .outputs
+                .iter()
+                .find(|(n, _)| n == port)
+                .map(|(_, id)| *id)
+                .unwrap_or_else(|| panic!("no `{port}` output"))
+        };
+        let in_of = |graph: &graph::FGraph, node, port: &str| {
+            graph.nodes[node]
+                .inputs
+                .iter()
+                .find(|(n, _)| n == port)
+                .map(|(_, id)| *id)
+                .unwrap_or_else(|| panic!("no `{port}` input"))
+        };
+
+        let file = out_of(&h.app.editor.graph, src, "file");
+        let demux_in = in_of(&h.app.editor.graph, demux2, "in");
+        h.app
+            .connect_ports(file, demux_in, 0)
+            .expect("a Source may feed a second Demux");
+
+        let video = out_of(&h.app.editor.graph, demux2, "video");
+        let pkg_video = in_of(&h.app.editor.graph, pkg, "video");
+        let err = h
+            .app
+            .connect_ports(video, pkg_video, 1)
+            .expect_err("a Package cannot read two Demuxes");
+        assert!(err.contains("two different Demux"), "unexpected: {err}");
+
+        // The refused wire must not be left behind.
+        assert!(
+            !h.app.editor.graph.connections(pkg_video).contains(&video),
+            "the rejected connection is still in the graph"
+        );
     }
 
     /// A file ffprobe cannot open must not be re-probed on every frame, and

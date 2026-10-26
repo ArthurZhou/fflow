@@ -275,6 +275,55 @@ const ZH: &[(&str, &str)] = &[
     ("{} output(s)", "{} 个输出"),
     ("{} of {} outputs", "{} / {} 个输出"),
     ("nothing connected to this Package", "该封装节点没有接任何输入"),
+    ("cannot compile: {}", "无法编译：{}"),
+    (
+        "two branches can both reach `{}` — a port fed by several wires only works with the two sides of a Condition",
+        "两条支路会同时到达 `{}` — 一个端口接多根线时，只接受条件分支的 pass / fail 两侧",
+    ),
+    ("connection rejected: {}", "连接被拒绝：{}"),
+    // -- compiler diagnostics (command panel + flow chip) -------------------
+    ("the workflow has no Package node", "工作流里没有封装输出节点"),
+    (
+        "every Package node feeds another node — the workflow has no output",
+        "所有封装输出节点都接到了别的节点上 — 工作流没有任何输出",
+    ),
+    ("the Demux node has nothing connected to its `in` port", "解复用节点的 `in` 端口没有接线"),
+    (
+        "a Demux must be fed by a Source or a Package node, not by {}",
+        "解复用节点只能由源文件或封装输出节点接入，不能是 {}",
+    ),
+    ("the workflow chains more than 16 stages — is there a loop?", "工作流串联超过 16 个阶段 — 是不是有环？"),
+    (
+        "the Package node reads from two different Demux nodes; a stage must come from one file",
+        "封装输出节点同时读取了两个不同的解复用节点；一个阶段只能来自同一个文件",
+    ),
+    ("filter chain too deep (cycle?)", "滤镜链过深（可能有环？）"),
+    ("{} cannot appear inside a stream chain", "{} 不能出现在流处理链里"),
+    (
+        "{} branch has filters but no encoder — add a {} Encoder node",
+        "{}支路有滤镜但没有编码器 — 请加一个{}编码节点",
+    ),
+    (
+        "nothing to encode for {} — connect a Demux branch to the Package node",
+        "{} 没有可编码的内容 — 请把解复用的一条支路接到封装输出节点",
+    ),
+    (
+        "output path would overwrite the source file ({}); change the naming template",
+        "输出路径会覆盖源文件（{}）；请修改命名模板",
+    ),
+    (
+        "two Package nodes both write {}; give them different naming templates or containers",
+        "两个封装输出节点都要写 {}；请给它们不同的命名模板或容器",
+    ),
+    (
+        "video encoder `{}` is not available in this ffmpeg build — pick another codec or press “detect encoders”",
+        "这个 ffmpeg 里没有视频编码器 `{}` — 请换一个编码器，或点「探测编码器」",
+    ),
+    ("audio encoder `{}` is not available in this ffmpeg build", "这个 ffmpeg 里没有音频编码器 `{}`"),
+    ("a Video Encoder is connected to the audio branch", "视频编码节点接在了音频支路上"),
+    ("an Audio Encoder is connected to the video branch", "音频编码节点接在了视频支路上"),
+    ("video", "视频"),
+    ("audio", "音频"),
     ("condition `{}` sent this file down its other branch", "条件 `{}` 把这个文件送到了另一条分支"),
     ("the Package node is not connected to a Demux — add one between the source and the encoders",
      "封装节点没有连接到解复用节点 — 请在源和编码器之间加一个"),
@@ -290,8 +339,8 @@ const ZH: &[(&str, &str)] = &[
         "源文件 » 解复用 »（视频 / 音频链）» 封装输出。源节点找到的每个文件都会编译成一条独立的 ffmpeg 命令。",
     ),
     (
-        "Blue = File, orange = Video, green = Audio. Connections between different port types are refused immediately.",
-        "蓝色 = 文件，橙色 = 视频，绿色 = 音频。不同类型的端口连接会立即被拒绝。",
+        "Blue = File, orange = Video, green = Audio. Connections between different port types are refused immediately, and so is any wire that would make the workflow uncompilable — two Demuxes into one Package, or two branches that can both reach the same input.",
+        "蓝色 = 文件，橙色 = 视频，绿色 = 音频。不同类型的端口连接会立即被拒绝；会让工作流编不出来的接线也会当场拒绝 — 比如两个解复用节点接进同一个封装节点，或两条可能同时生效的支路接到同一个入口。",
     ),
     ("• drag empty canvas: box select", "• 在空白画布上拖动：框选"),
     (

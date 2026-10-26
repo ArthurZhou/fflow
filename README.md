@@ -42,7 +42,7 @@ $env:FFLOW_FFPROBE = "D:\tools\ffprobe.exe"
 
 ```powershell
 cargo run --release          # 启动 GUI
-cargo test                   # 96 个测试
+cargo test                   # 102 个测试
 cargo build --release        # 产物：target\release\fflow.exe
 ```
 
@@ -62,6 +62,23 @@ fflow --screenshot <out.ppm> [--size 1600x980] [--select N]
 `--lang en|zh` 可加在任何模式前（包括 `--screenshot` 和 `--selftest`），环境变量
 `FFLOW_LANG` 等价。`--screenshot` 是 `shots/` 里所有截图的产生方式，也是改完视觉后最快的验收手段。
 
+### 接线时就会拒绝的连线
+
+编辑器不允许画出**编不出来的图**。`compiler::wiring_problems` 只用图结构就能判定的两类错误，在连线落下的那一刻就被拒绝
+（提示出现在左下角），而不是等到 Run 才报错：
+
+| 规则 | 为什么 |
+|---|---|
+| 一个封装输出节点的入口只能来自**同一个解复用节点** | 一条 ffmpeg 命令只有一个 `-i`，两个解复用意味着两个文件 |
+| 一个多入口端口（编码器 `in`、封装 `video`/`audio`）接多根线时，必须来自**同一个条件分支的 pass / fail 两侧** | 否则两条支路会同时生效，编译器无法决定用哪条 |
+
+条件分支本身不受影响：`pass` 和 `fail` 各接一条进同一个入口是合法的，因为对任何文件只会有一条生效。
+判断时会一路向上收集经过的条件及其出口端口，所以「条件 → 解复用 → 支路」这种写法也算数——解复用上面的条件同样约束这条支路。
+
+已经存在于旧 JSON 里的错误接线仍能打开和编辑：只有**新增**的问题才拒绝连线，否则一个坏文件会把人锁死。
+剩下的编译期报错都依赖节点设置而不是接线（两个封装写同一个路径、滤镜链没有编码器、编码器在这个 ffmpeg 里不存在……），
+它们会出现在命令预览和流向浮层里。
+
 ### 流向预览
 
 在左下角文件列表里点一个文件，画布立刻回答「这个文件会走到哪」：**不经过的节点和连线全部变暗**，
@@ -70,8 +87,10 @@ fflow --screenshot <out.ppm> [--size 1600x980] [--select N]
 
 要点：
 
-- 结论来自 `compiler::trace`，它复用编译器的 `routing` / `check_gates` / `upstream`，不是第二套规则；
-  预览说会写什么，Run 就真的写什么。
+- 每个输出的结论就是 `compile_chain` 本身——Run 调用的同一个函数，所以预览不可能比实际多写或少写一个文件；
+  高亮走的那遍遍历只负责回答「经过哪些节点」。
+- 图本身编不出来时（例如跨分支接线），浮层用红点标出**编译错误原文**，并且不做变暗：那不是「这个文件没人要」，
+  而是「这个图跑不了」，两者不能混为一谈。
 - 条件分支（Condition 在 Demux **前面**）也会被点亮：文件确实从那个节点穿过。
 - `Esc` 或浮层右上角的 ✕ 退出；点浮层里的某一行会选中对应的 Package 节点。
 - 文件还在探测中时不显示预览——Condition 依赖真实时长 / 流布局，用猜测画出来的流向比不画更糟。
@@ -274,7 +293,7 @@ src/
 ## 验证
 
 ```powershell
-cargo test                                  # 96 个单元 + 无头 UI 测试
+cargo test                                  # 102 个单元 + 无头 UI 测试
 cargo run -- --selftest testdata            # 真实调用 ffmpeg 的端到端检查
 cargo run -- --screenshot out.ppm           # 整窗离屏渲染
 cargo run -- --screenshot zh.ppm --lang zh  # 中文界面验收（含 CJK 字形）

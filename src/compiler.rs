@@ -148,7 +148,7 @@ fn upstream_at(
     depth: usize,
 ) -> Result<Upstream> {
     if depth > 64 {
-        bail!("filter chain too deep (cycle?)");
+        bail!(crate::i18n::t("filter chain too deep (cycle?)"));
     }
 
     let node = graph.get_output(output).node;
@@ -164,7 +164,9 @@ fn upstream_at(
         return Ok(Upstream::Chain(vec![node]));
     }
     if kind == NodeKind::Source || kind == NodeKind::Package {
-        bail!("{} cannot appear inside a stream chain", kind.title());
+        bail!(
+            crate::tr!("{} cannot appear inside a stream chain", kind.title())
+        );
     }
 
     // A Condition only lets one of its two outputs through.
@@ -386,16 +388,15 @@ fn build_plan(
             NodeConfig::Condition(_) => {}
             NodeConfig::VideoEncoder(c) => {
                 if !is_video {
-                    bail!("a Video Encoder is connected to the audio branch");
+                    bail!(crate::i18n::t("a Video Encoder is connected to the audio branch"));
                 }
                 let (codec, note) = c.effective_codec(reg);
                 if let Some(r) = reg {
                     if codec != "copy" && !r.is_usable(&codec) {
-                        bail!(
-                            "video encoder `{}` is not available in this ffmpeg build — \
-                             pick another codec or press “detect encoders”",
+                        bail!(crate::tr!(
+                            "video encoder `{}` is not available in this ffmpeg build — pick another codec or press “detect encoders”",
                             codec
-                        );
+                        ));
                     }
                 }
                 if let Some(n) = note {
@@ -405,14 +406,14 @@ fn build_plan(
             }
             NodeConfig::AudioEncoder(c) => {
                 if is_video {
-                    bail!("an Audio Encoder is connected to the video branch");
+                    bail!(crate::i18n::t("an Audio Encoder is connected to the video branch"));
                 }
                 if let Some(r) = reg {
                     if c.codec != "copy" && !r.is_usable(&c.codec) {
-                        bail!(
+                        bail!(crate::tr!(
                             "audio encoder `{}` is not available in this ffmpeg build",
                             c.codec
-                        );
+                        ));
                     }
                 }
                 encoder = Some(c.args());
@@ -454,11 +455,11 @@ fn build_plan(
     let encoder_args = match encoder {
         Some(args) => args,
         None if has_filters => {
-            bail!(
+            bail!(crate::tr!(
                 "{} branch has filters but no encoder — add a {} Encoder node",
-                if is_video { "video" } else { "audio" },
-                if is_video { "Video" } else { "Audio" }
-            )
+                crate::i18n::t(if is_video { "video" } else { "audio" }),
+                crate::i18n::t(if is_video { "Video" } else { "Audio" })
+            ))
         }
         // Pure remux of that branch.
         None => vec![
@@ -698,10 +699,10 @@ fn compile_stage(
         if let Some(why) = notes.iter().find(|n| n.contains("condition")) {
             return Err(anyhow::Error::new(Skipped(why.clone())));
         }
-        bail!(
+        bail!(crate::tr!(
             "nothing to encode for {} — connect a Demux branch to the Package node",
             input.display()
-        );
+        ));
     }
 
     let filter_complex = if fg.segments.is_empty() {
@@ -857,10 +858,10 @@ pub fn compile_all(
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for job in &jobs {
         if !seen.insert(job.output.clone()) {
-            bail!(
+            bail!(crate::tr!(
                 "two Package nodes both write {}; give them different naming templates or containers",
                 job.output.display()
-            );
+            ));
         }
     }
 
@@ -893,10 +894,10 @@ fn compile_chain(
             };
             let p = render_output_path(cfg, input, index, root);
             if p == input {
-                bail!(
+                bail!(crate::tr!(
                     "output path would overwrite the source file ({}); change the naming template",
                     input.display()
-                );
+                ));
             }
             p
         } else {
@@ -1125,7 +1126,7 @@ fn stage_plans(
 ) -> Result<Vec<Vec<(egui_node_graph2::NodeId, egui_node_graph2::NodeId)>>> {
     let packages = package_nodes(graph);
     if packages.is_empty() {
-        bail!("the workflow has no Package node");
+        bail!(crate::i18n::t("the workflow has no Package node"));
     }
 
     let terminals: Vec<_> = packages
@@ -1134,7 +1135,9 @@ fn stage_plans(
         .filter(|p| !file_output_connected(graph, *p))
         .collect();
     if terminals.is_empty() {
-        bail!("every Package node feeds another node — the workflow has no output");
+        bail!(crate::i18n::t(
+            "every Package node feeds another node — the workflow has no output"
+        ));
     }
 
     let mut plans = Vec::with_capacity(terminals.len());
@@ -1161,7 +1164,9 @@ fn stage_chain(
             .map(|(_, id)| *id)
             .ok_or_else(|| anyhow::anyhow!("the Demux node has no `in` port"))?;
         let Some(conn) = first_conn(graph, in_port) else {
-            bail!("the Demux node has nothing connected to its `in` port");
+            bail!(crate::i18n::t(
+                "the Demux node has nothing connected to its `in` port"
+            ));
         };
         let src = graph.get_output(conn).node;
         // Skip over Conditions: they route files, not streams, and are
@@ -1173,13 +1178,15 @@ fn stage_chain(
                 chain.reverse();
                 return Ok(chain);
             }
-            other => bail!(
+            other => bail!(crate::tr!(
                 "a Demux must be fed by a Source or a Package node, not by {}",
                 other.title()
-            ),
+            )),
         }
     }
-    bail!("the workflow chains more than 16 stages — is there a loop?")
+    bail!(crate::i18n::t(
+        "the workflow chains more than 16 stages — is there a loop?"
+    ))
 }
 
 /// Is this Package's `file` output wired into something?
@@ -1201,11 +1208,15 @@ fn file_output_connected(graph: &FGraph, pkg: egui_node_graph2::NodeId) -> bool 
 }
 
 /// The Demux a Package reads from, ignoring conditions.
+///
+/// Every wire on every input is followed, not just the first one: a Package
+/// input accepts several connections, and looking at one of them let a Package
+/// be fed from two Demuxes without anybody noticing until the encode failed.
 fn structural_demux(graph: &FGraph, pkg: egui_node_graph2::NodeId) -> Result<egui_node_graph2::NodeId> {
     let mut stack: Vec<egui_node_graph2::NodeId> = graph.nodes[pkg]
         .inputs
         .iter()
-        .filter_map(|(_, id)| first_conn(graph, *id))
+        .flat_map(|(_, id)| graph.connections(*id))
         .map(|o| graph.get_output(o).node)
         .collect();
     let mut seen = std::collections::HashSet::new();
@@ -1219,10 +1230,9 @@ fn structural_demux(graph: &FGraph, pkg: egui_node_graph2::NodeId) -> Result<egu
         if kind == NodeKind::Demux {
             if let Some(prev) = found {
                 if prev != node {
-                    bail!(
-                        "the Package node reads from two different Demux nodes; \
-                         a stage must come from one file"
-                    );
+                    bail!(crate::i18n::t(
+                        "the Package node reads from two different Demux nodes; a stage must come from one file"
+                    ));
                 }
             }
             found = Some(node);
@@ -1245,6 +1255,146 @@ fn structural_demux(graph: &FGraph, pkg: egui_node_graph2::NodeId) -> Result<egu
     })
 }
 
+/// A wiring mistake that can be judged from the graph alone, without a file.
+///
+/// The compiler reports these too, but by then the graph is finished and the
+/// error only arrives at compile time — from a batch run or the command panel.
+/// Everything in [`wiring_problems`] is decidable from the wiring itself, so
+/// the editor refuses the connection instead of letting you build something
+/// that cannot run.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WireProblem {
+    /// The node the mistake belongs to: the fan-in node, or the Package.
+    pub node: egui_node_graph2::NodeId,
+    pub message: String,
+}
+
+/// The routing decisions that led to an output: each Condition on the way up,
+/// with the port the branch left it by.
+type Gates = Vec<(egui_node_graph2::NodeId, String)>;
+
+/// Name of the output port `out` on `node`.
+fn port_name(graph: &FGraph, node: egui_node_graph2::NodeId, out: egui_node_graph2::OutputId) -> String {
+    graph.nodes[node]
+        .outputs
+        .iter()
+        .find(|(_, id)| *id == out)
+        .map(|(n, _)| n.clone())
+        .unwrap_or_default()
+}
+
+/// Every gate-set from `output` up to a Source, Demux or Package.
+///
+/// Bounded on both depth and count: this feeds a sanity check, and a
+/// pathological graph should fall back to the compiler's own error rather than
+/// spend forever here.
+fn gate_sets(
+    graph: &FGraph,
+    output: egui_node_graph2::OutputId,
+    gates: Gates,
+    depth: usize,
+    out: &mut Vec<Gates>,
+) {
+    if depth > 32 || out.len() >= 8 {
+        return;
+    }
+    let node = graph.get_output(output).node;
+    let kind = graph.nodes[node].user_data.kind();
+    let mut gates = gates;
+    match kind {
+        NodeKind::Source | NodeKind::Package => {
+            out.push(gates);
+            return;
+        }
+        NodeKind::Demux => {
+            // A Demux reached through a Condition only carries the files that
+            // Condition let through — that decision is part of this branch, and
+            // leaving it out made the two sides of a gate look simultaneous.
+            gates.extend(routing(graph, node).gates);
+            out.push(gates);
+            return;
+        }
+        NodeKind::Condition => gates.push((node, port_name(graph, node, output))),
+        _ => {}
+    }
+    let Some(in_port) = graph.nodes[node]
+        .inputs
+        .iter()
+        .find(|(n, _)| n == "in")
+        .map(|(_, id)| *id)
+    else {
+        out.push(gates);
+        return;
+    };
+    for conn in graph.connections(in_port) {
+        gate_sets(graph, conn, gates.clone(), depth + 1, out);
+    }
+}
+
+/// Can these two branches both carry the same file?
+///
+/// They are mutually exclusive only if some Condition sent one down `pass` and
+/// the other down `fail`. Anything else — including two plain wires from the
+/// same Demux — is live at the same time for at least one file, which the
+/// compiler can only reject after the fact.
+fn mutually_exclusive(a: &Gates, b: &Gates) -> bool {
+    a.iter()
+        .any(|(na, pa)| b.iter().any(|(nb, pb)| na == nb && pa != pb))
+}
+
+/// Every wiring mistake the graph makes, decided without looking at a file.
+///
+/// Two rules, both of which the compiler would otherwise discover per file:
+///
+/// * a Package may only read from one Demux — one ffmpeg command has one input;
+/// * a port that accepts several connections may only be fed by branches that
+///   are exclusive, i.e. the two sides of a Condition.
+pub fn wiring_problems(graph: &FGraph) -> Vec<WireProblem> {
+    let mut out = Vec::new();
+
+    for pkg in package_nodes(graph) {
+        if let Err(e) = structural_demux(graph, pkg) {
+            out.push(WireProblem {
+                node: pkg,
+                message: format!("{:#}", e),
+            });
+        }
+    }
+
+    for node in graph.iter_nodes() {
+        for (name, port) in graph.nodes[node].inputs.clone() {
+            let conns = graph.connections(port);
+            if conns.len() < 2 {
+                continue;
+            }
+            let mut clash = false;
+            'pairs: for i in 0..conns.len() {
+                for j in (i + 1)..conns.len() {
+                    let mut a = Vec::new();
+                    gate_sets(graph, conns[i], Vec::new(), 0, &mut a);
+                    let mut b = Vec::new();
+                    gate_sets(graph, conns[j], Vec::new(), 0, &mut b);
+                    if a.iter().any(|ga| b.iter().any(|gb| !mutually_exclusive(ga, gb))) {
+                        clash = true;
+                        break 'pairs;
+                    }
+                }
+            }
+            if clash {
+                out.push(WireProblem {
+                    node,
+                    message: crate::tr!(
+                        "two branches can both reach `{}` — a port fed by several wires only works with the two sides of a Condition",
+                        name
+                    ),
+                });
+            }
+        }
+    }
+
+    out
+}
+
 /// What happens to one file, without running ffmpeg.
 ///
 /// This answers "does my wiring do what I think?" — the canvas dims everything
@@ -1258,12 +1408,25 @@ pub struct Trace {
     pub links: std::collections::HashSet<(egui_node_graph2::OutputId, egui_node_graph2::InputId)>,
     /// One entry per terminal Package, in graph order.
     pub outputs: Vec<OutputTrace>,
+    /// The workflow cannot be compiled at all, so there is no flow to trace.
+    ///
+    /// Kept apart from a per-output `reason`: "this file matches nothing" and
+    /// "this graph is broken" are different answers, and reporting the first
+    /// when the second is true sends you looking in the wrong place. When this
+    /// is set, `nodes`/`links` are empty and nothing should be dimmed — no
+    /// decision was made.
+    pub error: Option<String>,
 }
 
 impl Trace {
     /// Did any output take this file?
     pub fn flows(&self) -> bool {
         self.outputs.iter().any(|o| o.taken)
+    }
+
+    /// Is the workflow itself unusable?
+    pub fn failed(&self) -> bool {
+        self.error.is_some()
     }
 
     /// The outputs this file will actually be written to.
@@ -1321,19 +1484,94 @@ fn link_between(
     None
 }
 
-/// Decide what the graph does with one file, using the same checks the
-/// compiler runs: the gates in front of each Demux, then the Condition-aware
-/// walk up each connected Package input.
+/// Mark every node and wire this file travels through for one output.
 ///
-/// Deliberately built on `routing`, `check_gates` and `upstream` rather than a
-/// second implementation of the flow rules — a preview that disagrees with the
-/// compiler would be worse than no preview.
-pub fn trace(graph: &FGraph, input: &Path, info: &ProbeInfo) -> Trace {
+/// Only called once the compiler has said yes: the walk answers "where", the
+/// compiler answers "whether", and the preview must never be the thing that
+/// decides.
+fn collect_flow(
+    graph: &FGraph,
+    pkg: egui_node_graph2::NodeId,
+    facts: &FileFacts<'_>,
+    t: &mut Trace,
+    path: &mut Vec<String>,
+) {
+    // A Package usually has a video *and* an audio input, both fed from the
+    // same Source and Demux. The summary is a list of nodes the file passes
+    // through, so each node is listed once, in first-seen order.
+    let mut seen: Vec<egui_node_graph2::NodeId> = Vec::new();
+
+    for (_, port_id) in graph.nodes[pkg].inputs.clone() {
+        let Some(conn) = first_conn(graph, port_id) else {
+            continue;
+        };
+        let Ok(Upstream::Chain(nodes)) = upstream(graph, conn, facts) else {
+            continue;
+        };
+        t.links.insert((conn, port_id));
+        for n in &nodes {
+            t.nodes.insert(*n);
+        }
+        // The chain runs Demux -> ... -> the node feeding the port, so each
+        // pair is (upstream, downstream).
+        for pair in nodes.windows(2) {
+            if let Some(link) = link_between(graph, pair[0], pair[1]) {
+                t.links.insert(link);
+            }
+        }
+        // Conditions in front of the Demux route whole files, so they are on
+        // the path too - dimming a gate that the file just went through would
+        // be a lie.
+        let r = routing(graph, nodes[0]);
+        if let Some(src) = r.source {
+            t.nodes.insert(src);
+            let mut below = nodes[0];
+            for (gate, _) in &r.gates {
+                t.nodes.insert(*gate);
+                if let Some(link) = link_between(graph, *gate, below) {
+                    t.links.insert(link);
+                }
+                below = *gate;
+            }
+            if let Some(link) = link_between(graph, src, below) {
+                t.links.insert(link);
+            }
+            push_node(graph, path, &mut seen, src);
+            for (gate, _) in r.gates.iter().rev() {
+                push_node(graph, path, &mut seen, *gate);
+            }
+        }
+        for n in &nodes {
+            push_node(graph, path, &mut seen, *n);
+        }
+    }
+    t.nodes.insert(pkg);
+    push_node(graph, path, &mut seen, pkg);
+}
+
+/// Decide what the graph does with one file, without running ffmpeg.
+///
+/// The verdict for each output is `compile_chain` itself - the same function
+/// `Run` calls - so the preview cannot claim an output that would fail, or
+/// miss one that would work. The extra walk only says *where* the file goes,
+/// for the canvas highlight.
+pub fn trace(
+    graph: &FGraph,
+    input: &Path,
+    info: &ProbeInfo,
+    index: usize,
+    root: Option<&Path>,
+) -> Trace {
     let mut t = Trace::default();
-    let Ok(plans) = stage_plans(graph) else {
-        // A graph with no usable output has nothing to preview; the command
-        // panel already shows the compile error.
-        return t;
+    let plans = match stage_plans(graph) {
+        Ok(plans) => plans,
+        Err(e) => {
+            // The command panel shows the same error, but the chip has to say
+            // it too: "no output takes this file" would blame the file for a
+            // wiring mistake.
+            t.error = Some(format!("{:#}", e));
+            return t;
+        }
     };
 
     let size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
@@ -1343,7 +1581,7 @@ pub fn trace(graph: &FGraph, input: &Path, info: &ProbeInfo) -> Trace {
         info,
     };
 
-    for chain in plans {
+    for (slot, chain) in plans.iter().enumerate() {
         let (pkg, _) = *chain.last().expect("a chain is never empty");
         let target = match &graph.nodes[pkg].user_data.config {
             NodeConfig::Package(c) => c.ext().to_string(),
@@ -1357,89 +1595,20 @@ pub fn trace(graph: &FGraph, input: &Path, info: &ProbeInfo) -> Trace {
             path: Vec::new(),
         };
 
-        // Every stage of the chain has to let the file through.
-        let mut blocked = None;
-        for (_, demux) in &chain {
-            if let Err(e) = check_gates(graph, *demux, &facts) {
-                blocked = Some(
-                    skipped_reason(&e)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| format!("{:#}", e)),
-                );
-                break;
+        match compile_chain(graph, chain, input, info, index, root, slot) {
+            Ok(_) => {
+                verdict.taken = true;
+                collect_flow(graph, pkg, &facts, &mut t, &mut verdict.path);
             }
-        }
-        if let Some(why) = blocked {
-            verdict.reason = Some(why);
-            t.outputs.push(verdict);
-            continue;
-        }
-
-        // Walk each connected input of the terminal Package.
-        let mut live = false;
-        let mut dropped: Option<String> = None;
-        // A Package usually has a video *and* an audio input, both fed from the
-        // same Source and Demux. The summary is a list of nodes the file passes
-        // through, so each node is listed once, in first-seen order.
-        let mut seen: Vec<egui_node_graph2::NodeId> = Vec::new();
-
-        for (_, port_id) in graph.nodes[pkg].inputs.clone() {
-            let Some(conn) = first_conn(graph, port_id) else {
-                continue;
-            };
-            match upstream(graph, conn, &facts) {
-                Ok(Upstream::Chain(nodes)) => {
-                    live = true;
-                    t.links.insert((conn, port_id));
-                    for n in &nodes {
-                        t.nodes.insert(*n);
-                    }
-                    // The chain runs Demux → … → the node feeding the port, so
-                    // each pair is (upstream, downstream).
-                    for pair in nodes.windows(2) {
-                        if let Some(link) = link_between(graph, pair[0], pair[1]) {
-                            t.links.insert(link);
-                        }
-                    }
-                    // Conditions in front of the Demux route whole files, so
-                    // they are on the path too — dimming a gate that the file
-                    // just went through would be a lie.
-                    let r = routing(graph, nodes[0]);
-                    if let Some(src) = r.source {
-                        t.nodes.insert(src);
-                        let mut below = nodes[0];
-                        for (gate, _) in &r.gates {
-                            t.nodes.insert(*gate);
-                            if let Some(link) = link_between(graph, *gate, below) {
-                                t.links.insert(link);
-                            }
-                            below = *gate;
-                        }
-                        if let Some(link) = link_between(graph, src, below) {
-                            t.links.insert(link);
-                        }
-                        push_node(graph, &mut verdict.path, &mut seen, src);
-                        for (gate, _) in r.gates.iter().rev() {
-                            push_node(graph, &mut verdict.path, &mut seen, *gate);
-                        }
-                    }
-                    for n in &nodes {
-                        push_node(graph, &mut verdict.path, &mut seen, *n);
-                    }
-                }
-                Ok(Upstream::Dropped(why)) => dropped = Some(why),
-                Err(e) => dropped = Some(format!("{:#}", e)),
+            // A closed Condition is a "skip"; everything else (no encoder on a
+            // filter chain, an unusable codec, an output that would overwrite
+            // its own input) is a real reason the output is not written.
+            Err(e) => {
+                verdict.reason = Some(match skipped_reason(&e) {
+                    Some(why) => why.to_string(),
+                    None => format!("{:#}", e),
+                });
             }
-        }
-
-        if live {
-            verdict.taken = true;
-            t.nodes.insert(pkg);
-            push_node(graph, &mut verdict.path, &mut seen, pkg);
-        } else {
-            verdict.reason = Some(
-                dropped.unwrap_or_else(|| crate::i18n::t("nothing connected to this Package").to_string()),
-            );
         }
         t.outputs.push(verdict);
     }
@@ -1480,6 +1649,15 @@ pub fn compile_batch(
 mod tests {
     use super::*;
     use crate::graph::nodes::{PackageConfig, TrackMode, VideoEncoderConfig};
+
+    /// Pin the language before asserting on message text.
+    ///
+    /// The catalogue is thread-local, and another test on this thread may have
+    /// switched to Chinese. Tests that only look at *structure* (an error, a
+    /// skip, a count) deliberately do not call this.
+    fn english() {
+        crate::i18n::set(crate::i18n::Language::En);
+    }
 
     fn probe(v: usize, a: usize, s: usize) -> ProbeInfo {
         use crate::probe::StreamInfo;
@@ -1785,12 +1963,13 @@ mod tests {
     /// a gate in front of the Demux is part of the path, not a bystander.
     #[test]
     fn trace_lights_up_the_branch_that_takes_the_file() {
+        english();
         let mkv = condition(serde_json::json!([
             { "field": "Extension", "key": "", "op": "Equals", "value": "mkv" }
         ]));
         let wf = two_branch_workflow(mp4_gate(), mkv);
         let editor = editor_from(wf);
-        let t = trace(&editor.graph, Path::new("/tmp/clip.mp4"), &probe(1, 1, 0));
+        let t = trace(&editor.graph, Path::new("/tmp/clip.mp4"), &probe(1, 1, 0), 1, None);
 
         let id = |json_id: u64| {
             crate::graph::node_by_json_id(&editor.graph, json_id)
@@ -1838,13 +2017,124 @@ mod tests {
     fn trace_reports_a_file_that_flows_nowhere() {
         let wf = two_branch_workflow(mp4_gate(), mp4_gate());
         let editor = editor_from(wf);
-        let t = trace(&editor.graph, Path::new("/tmp/clip.webm"), &probe(1, 1, 0));
+        let t = trace(&editor.graph, Path::new("/tmp/clip.webm"), &probe(1, 1, 0), 1, None);
 
         assert!(!t.flows());
         assert!(t.nodes.is_empty(), "nothing is highlighted: {:?}", t.nodes);
         assert!(t.links.is_empty());
         assert_eq!(t.outputs.len(), 2, "one verdict per Package");
         assert!(t.outputs.iter().all(|o| o.reason.is_some()));
+    }
+
+    /// A Package must read one Demux: one ffmpeg command has one input file.
+    /// The editor refuses the wire, so this rule is checked without a file.
+    #[test]
+    fn wiring_rejects_a_package_fed_from_two_demuxes() {
+        english();
+        let mut wf = two_branch_workflow(mp4_gate(), mp4_gate());
+        // Branch B's video straight into branch A's Package — the crossing
+        // that used to be accepted and then failed at compile time.
+        wf.edges.push(edge((6, "video"), (4, "video")));
+        let editor = editor_from(wf);
+
+        let problems = wiring_problems(&editor.graph);
+        assert!(
+            problems.iter().any(|p| p.message.contains("two different Demux")),
+            "expected a cross-Demux problem, got {problems:?}"
+        );
+
+        // The compiler agrees, so the refusal is not stricter than reality.
+        let err = compile_all(
+            &editor.graph,
+            Path::new("/tmp/clip.mp4"),
+            &probe(1, 1, 0),
+            1,
+            None,
+        )
+        .expect_err("a cross-branch Package cannot compile");
+        assert!(format!("{:#}", err).contains("two different Demux"));
+
+        // And the flow preview reports the graph, not a missing file.
+        let t = trace(&editor.graph, Path::new("/tmp/clip.mp4"), &probe(1, 1, 0), 1, None);
+        assert!(t.failed(), "the preview should say the graph is broken");
+        assert!(t.outputs.is_empty());
+        assert!(!t.flows());
+    }
+
+    /// Two wires from the same Demux into one port are ambiguous for every
+    /// file: neither is behind a Condition, so both are always live.
+    #[test]
+    fn wiring_rejects_two_branches_that_are_both_live() {
+        english();
+        let mut wf = two_branch_workflow(mp4_gate(), mp4_gate());
+        // The encoder's output feeds the Package, and the raw Demux video
+        // output is wired in beside it.
+        wf.edges.push(edge((2, "video"), (4, "video")));
+        let editor = editor_from(wf);
+
+        let problems = wiring_problems(&editor.graph);
+        assert!(
+            problems.iter().any(|p| p.message.contains("two branches")),
+            "expected an ambiguity problem, got {problems:?}"
+        );
+    }
+
+    /// The two sides of a Condition into one port are the *one* legitimate
+    /// fan-in: exactly one of them is live for any given file.
+    #[test]
+    fn wiring_allows_the_two_sides_of_a_condition() {
+        let mut wf = two_branch_workflow(mp4_gate(), mp4_gate());
+        // Route the gate's `fail` side into the encoder as well, so `pass` and
+        // `fail` both arrive at the same input.
+        wf.edges.push(edge((1, "fail"), (3, "in")));
+        let editor = editor_from(wf);
+
+        assert!(
+            wiring_problems(&editor.graph).is_empty(),
+            "a pass/fail merge is legal: {:?}",
+            wiring_problems(&editor.graph)
+        );
+    }
+
+    /// The default workflow — the shape every new session starts from — must
+    /// never trip these rules.
+    #[test]
+    fn the_default_workflow_has_no_wiring_problems() {
+        let editor = editor_from(crate::graph::default_workflow(None));
+        assert_eq!(wiring_problems(&editor.graph), Vec::new());
+    }
+
+    /// The preview's verdict must *be* the compiler's verdict, for every file
+    /// and every branch — that is the whole point of routing it through
+    /// `compile_chain` instead of a second walk.
+    #[test]
+    fn trace_agrees_with_the_compiler() {
+        let mkv = condition(serde_json::json!([
+            { "field": "Extension", "key": "", "op": "Equals", "value": "mkv" }
+        ]));
+        let editor = editor_from(two_branch_workflow(mp4_gate(), mkv));
+
+        for name in ["clip.mp4", "clip.mkv", "clip.webm", "clip.avi"] {
+            let path = Path::new("/tmp").join(name);
+            let t = trace(&editor.graph, &path, &probe(1, 1, 0), 1, None);
+            let compiled = compile_all(&editor.graph, &path, &probe(1, 1, 0), 1, None);
+            assert_eq!(
+                t.flows(),
+                compiled.is_ok(),
+                "{name}: preview says {} but the compiler says {:?}",
+                t.flows(),
+                compiled.as_ref().err().map(|e| format!("{:#}", e))
+            );
+            if let Ok(jobs) = &compiled {
+                assert_eq!(
+                    t.taken().count(),
+                    jobs.len(),
+                    "{name}: the preview highlights {} output(s), the compiler builds {}",
+                    t.taken().count(),
+                    jobs.len()
+                );
+            }
+        }
     }
 
     /// Two Packages writing the same path is a mistake worth reporting: ffmpeg
