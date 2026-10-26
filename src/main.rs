@@ -117,7 +117,8 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([980.0, 620.0])
-            .with_title("fflow — visual ffmpeg batch processor"),
+            .with_title("fflow — visual ffmpeg batch processor")
+            .with_icon(app_icon()),
         ..Default::default()
     };
 
@@ -126,6 +127,39 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| Ok(Box::new(app::FflowApp::new(cc)) as Box<dyn eframe::App>)),
     )
+}
+
+/// The window icon, decoded from the PNG that `tools/make_icon.py` writes.
+///
+/// `image` is already in the dependency tree — eframe decodes PNGs with it for
+/// its own tooling — so this costs no extra crate. 128 px covers a 32 px
+/// taskbar button up to 400 % scaling and still downscales cleanly to the
+/// 16 px title bar.
+///
+/// A decode failure is logged and ignored: an icon-less window is a cosmetic
+/// problem, refusing to start is not.
+fn app_icon() -> egui::IconData {
+    const PNG: &[u8] = include_bytes!("../assets/icon-128.png");
+    eframe::icon_data::from_png_bytes(PNG).unwrap_or_else(|e| {
+        tracing::warn!("window icon could not be decoded: {e}");
+        egui::IconData::default()
+    })
+}
+
+/// The asset is generated (`tools/make_icon.py`), so it can be regenerated in a
+/// format this build cannot read. `app_icon` deliberately degrades to no icon
+/// rather than aborting, which would hide that — this test is what notices.
+#[test]
+fn the_window_icon_decodes() {
+    let icon = app_icon();
+    assert_eq!((icon.width, icon.height), (128, 128));
+    assert_eq!(icon.rgba.len(), 128 * 128 * 4);
+    // Fully opaque in the middle of the tile, transparent in the corner the
+    // rounded tile cuts away: a blank or one-colour decode would fail here.
+    let centre = (64 * 128 + 64) * 4;
+    let corner = 0;
+    assert_eq!(icon.rgba[centre + 3], 255, "the tile should be opaque");
+    assert_eq!(icon.rgba[corner + 3], 0, "the tile corner should be cut away");
 }
 
 const STEPS: usize = 7;

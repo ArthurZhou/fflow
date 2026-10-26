@@ -42,9 +42,28 @@ $env:FFLOW_FFPROBE = "D:\tools\ffprobe.exe"
 
 ```powershell
 cargo run --release          # 启动 GUI
-cargo test                   # 102 个测试
+cargo test                   # 103 个测试
 cargo build --release        # 产物：target\release\fflow.exe
 ```
+
+### 应用图标
+
+图标由 `tools/make_icon.py` 生成，**纯 Python、零依赖**：有符号距离场按尺寸逐张光栅化（不是拿 512 缩下来），PNG 和 ICO 的字节也是手写的。
+
+```powershell
+python tools/make_icon.py    # 重写 assets/icon.svg、icon-<size>.png、icon.ico
+```
+
+图案用的是应用自己的语言——一根蓝色的 File 连线在解复用处**分叉**成橙色（视频）和绿色（音频），每条线末端一个端口圆点，和画布上的连线同色同形。16/24 px 会自动去掉端口圆点并把图形略微放大：小尺寸下圆点会糊成和连线一体的团块。
+
+| 文件 | 用途 |
+|---|---|
+| `assets/icon.svg` | 矢量原件，改图形从这里改 |
+| `assets/icon-16…512.png` | 逐尺寸渲染结果 |
+| `assets/icon.ico` | 16–256 多尺寸，给 Windows 资源用 |
+| `assets/fflow.rc` | 资源脚本，`build.rs` 交给 SDK 的 `rc.exe` 编译 |
+
+两条通道各管一半：`icon-128.png` 被 `include_bytes!` 编进二进制，作为**窗口图标**（`with_icon`）；`icon.ico` 由 `build.rs` 链接进 `.exe`，让**资源管理器 / 任务栏 / Alt-Tab** 看到同一个图案。找不到 Windows SDK 时 `build.rs` 只打一条 `cargo:warning` 就跳过——没有图标是外观问题，编不过不是。
 
 ### 命令行辅助模式
 
@@ -242,8 +261,12 @@ fflow --screenshot <out.ppm> [--size 1600x980] [--select N]
 ## 源码结构
 
 ```text
+build.rs           Windows 图标资源：rc.exe 编译 assets/fflow.rc，结果链接进 exe
+assets/            icon.svg（原件）、icon-16…512.png、icon.ico、fflow.rc
+tools/
+└── make_icon.py   零依赖图标生成器（SDF 逐尺寸光栅化 + 手写 PNG / ICO）
 src/
-├── main.rs        eframe 启动、--selftest / --screenshot 入口
+├── main.rs        eframe 启动、窗口图标、--selftest / --screenshot 入口
 ├── app.rs         应用状态、三栏布局、事件泵、拖放、无头测试
 ├── theme.rs       调色板、字号/间距、矢量图标、公共控件
 ├── i18n.rs        中英文案表、tr! 宏、运行时占位符替换
@@ -293,7 +316,7 @@ src/
 ## 验证
 
 ```powershell
-cargo test                                  # 102 个单元 + 无头 UI 测试
+cargo test                                  # 103 个单元 + 无头 UI 测试
 cargo run -- --selftest testdata            # 真实调用 ffmpeg 的端到端检查
 cargo run -- --screenshot out.ppm           # 整窗离屏渲染
 cargo run -- --screenshot zh.ppm --lang zh  # 中文界面验收（含 CJK 字形）

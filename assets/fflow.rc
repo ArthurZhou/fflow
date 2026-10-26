@@ -1,0 +1,7 @@
+// Windows resource script — compiled by build.rs, linked into the .exe.
+//
+// The shell takes the first RT_GROUP_ICON in the resource table as the
+// application icon, so one statement is all it needs. "icon.ico" is found
+// through the include path build.rs passes (/I assets), which also keeps this
+// file usable by hand from the assets directory.
+1 ICON "icon.ico"
