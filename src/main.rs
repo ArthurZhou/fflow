@@ -47,7 +47,8 @@ fn main() -> eframe::Result<()> {
     }
     if args.first().map(|a| a == "--selftest").unwrap_or(false) {
         let dir = args.get(1).map(PathBuf::from);
-        let code = match selftest(dir) {
+        let wf = arg_value(&args, "--workflow").map(PathBuf::from);
+        let code = match selftest(dir, wf) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("selftest failed: {:#}", e);
@@ -192,7 +193,7 @@ fn run_to_completion(runner: &mut runner::Runner, tag: usize) -> anyhow::Result<
 /// Headless end-to-end verification used during development:
 /// detect encoders, build the default pipeline, probe every file, compile, run
 /// the batch, cancel a job mid-flight, and exercise multi-track mapping.
-fn selftest(dir: Option<PathBuf>) -> anyhow::Result<()> {
+fn selftest(dir: Option<PathBuf>, workflow: Option<PathBuf>) -> anyhow::Result<()> {
     use anyhow::Context;
 
     let dir = dir
@@ -201,7 +202,10 @@ fn selftest(dir: Option<PathBuf>) -> anyhow::Result<()> {
     println!("== fflow selftest on {}", dir.display());
 
     // 1. workflow JSON round-trip
-    let wf = graph::default_workflow(Some(&dir));
+    let wf = match &workflow {
+        Some(path) => graph::Workflow::from_json(&std::fs::read_to_string(path)?)?,
+        None => graph::default_workflow(Some(&dir)),
+    };
     let json = wf.to_json()?;
     let wf2 = graph::Workflow::from_json(&json)?;
     let mut ctx = graph::GraphCtx::default();
@@ -267,12 +271,20 @@ fn selftest(dir: Option<PathBuf>) -> anyhow::Result<()> {
         probes.insert(f.to_string_lossy().to_string(), info);
     }
 
-    // 4. compile
-    let jobs: Vec<compiler::Job> =
-        compiler::compile_batch(&editor.graph, &files, &probes, Some(&dir))
-            .into_iter()
-            .collect::<Result<_, _>>()
-            .context("compile failed")?;
+    // 4. compile. A Condition may legitimately send a file down no branch at
+    // all, so a skip is counted rather than treated as a failure.
+    let mut jobs: Vec<compiler::Job> = Vec::new();
+    let mut skipped = 0usize;
+    for result in compiler::compile_batch(&editor.graph, &files, &probes, Some(&dir)) {
+        match result {
+            Ok(batch) => jobs.extend(batch),
+            Err(e) if compiler::skipped_reason(&e).is_some() => skipped += 1,
+            Err(e) => return Err(e).context("compile failed"),
+        }
+    }
+    if skipped > 0 {
+        step(4, format!("{} file(s) skipped by a condition", skipped));
+    }
     for job in &jobs {
         step(4, &job.display);
         for n in &job.notes {

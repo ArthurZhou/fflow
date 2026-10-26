@@ -808,7 +808,7 @@ impl FflowApp {
                 tr!("probing…").into()
             });
         };
-        compiler::compile(
+        let mut jobs = compiler::compile_all(
             &self.editor.graph,
             file,
             info,
@@ -818,7 +818,24 @@ impl FflowApp {
         .map_err(|e| match compiler::skipped_reason(&e) {
             Some(why) => tr!("skipped — {}", why),
             None => format!("{:#}", e),
-        })
+        })?;
+
+        // The preview shows the command(s) for the selected file. Several
+        // Packages mean several commands; fold them into one block so the
+        // panel still renders a single job.
+        let mut first = jobs.remove(0);
+        if !jobs.is_empty() {
+            let mut display = first.display.clone();
+            for job in &jobs {
+                display.push_str("\n\n");
+                display.push_str(&job.display);
+            }
+            first.display = display;
+            first
+                .notes
+                .push(tr!("{} outputs: {}", jobs.len() + 1, file.display()));
+        }
+        Ok(first)
     }
 
     fn start_run(&mut self) {
@@ -848,6 +865,11 @@ impl FflowApp {
         let mut jobs = Vec::new();
         let mut errors = Vec::new();
         let mut skipped = 0usize;
+        // One file can produce several outputs (a workflow may end in more
+        // than one Package), so task ids are handed out across the whole batch
+        // instead of reusing the file index — two jobs sharing an id would
+        // steal each other's progress events.
+        let mut next_id = 1usize;
         for (i, file) in self.files.clone().iter().enumerate() {
             let key = file.to_string_lossy().to_string();
             let Some(info) = self.probes.get(&key).cloned() else {
@@ -857,8 +879,20 @@ impl FflowApp {
                 ));
                 continue;
             };
-            match compiler::compile(&self.editor.graph, file, &info, i + 1, self.root.as_deref()) {
-                Ok(job) => jobs.push(job),
+            match compiler::compile_all(
+                &self.editor.graph,
+                file,
+                &info,
+                i + 1,
+                self.root.as_deref(),
+            ) {
+                Ok(mut batch) => {
+                    for job in &mut batch {
+                        job.id = next_id;
+                        next_id += 1;
+                    }
+                    jobs.extend(batch);
+                }
                 // A Condition routed this file to an empty branch: not an error.
                 Err(e) if compiler::skipped_reason(&e).is_some() => skipped += 1,
                 Err(e) => errors.push(format!("{}: {:#}", source::short_name(file), e)),

@@ -180,7 +180,7 @@ fn upstream_at(
         };
         if !open {
             return Ok(Upstream::Dropped(format!(
-                "condition `{}` routed this file to `{}`",
+                "condition `{}` sent this file down its other branch",
                 graph.nodes[node]
                     .user_data
                     .config
@@ -188,7 +188,6 @@ fn upstream_at(
                     .chars()
                     .take(40)
                     .collect::<String>(),
-                port
             )));
         }
     }
@@ -627,6 +626,10 @@ fn compile_stage(
         info,
     };
 
+    // A Condition in front of the Demux decides whether this file takes this
+    // branch at all; the stream-chain walk below never sees it.
+    check_gates(graph, demux, &facts)?;
+
     for (port, is_video) in [("video", true), ("audio", false)] {
         let Some(port_id) = graph.nodes[pkg]
             .inputs
@@ -805,14 +808,75 @@ fn compile_stage(
 /// A Package node may feed another Demux, which means "package this, then keep
 /// processing the result". Each hop becomes a stage; the intermediate files go
 /// to a temp directory and are removed by the runner when the job is done.
-pub fn compile(
+/// Compile one file into **every** output the graph asks for.
+///
+/// A workflow with a single terminal Package yields exactly one job, which is
+/// the common case. Several terminals mean the file is encoded once per
+/// output; a branch whose Condition rejects the file simply contributes no
+/// job, and the file only counts as skipped when *every* branch skips it.
+pub fn compile_all(
     graph: &FGraph,
     input: &Path,
     info: &ProbeInfo,
     index: usize,
     root: Option<&Path>,
+) -> Result<Vec<Job>> {
+    let plans = stage_plans(graph)?;
+    let mut jobs = Vec::new();
+    // Keep the first skip so a file that matches no branch reports the same
+    // "skipped — <reason>" it always did.
+    let mut skipped: Option<anyhow::Error> = None;
+    let mut failure: Option<anyhow::Error> = None;
+
+    for (slot, chain) in plans.iter().enumerate() {
+        match compile_chain(graph, chain, input, info, index, root, slot) {
+            Ok(job) => jobs.push(job),
+            Err(e) if skipped_reason(&e).is_some() => {
+                if skipped.is_none() {
+                    skipped = Some(e);
+                }
+            }
+            Err(e) => {
+                if failure.is_none() {
+                    failure = Some(e);
+                }
+            }
+        }
+    }
+
+    if jobs.is_empty() {
+        // A real error outranks a skip: if one branch is misconfigured the
+        // user needs to know, even when another branch would have skipped.
+        return Err(failure.or(skipped).unwrap_or_else(|| {
+            anyhow::anyhow!("no Package node produced an output for this file")
+        }));
+    }
+
+    // Two Packages with the same container and template would fight over one
+    // path; ffmpeg would silently let the last one win.
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for job in &jobs {
+        if !seen.insert(job.output.clone()) {
+            bail!(
+                "two Package nodes both write {}; give them different naming templates or containers",
+                job.output.display()
+            );
+        }
+    }
+
+    Ok(jobs)
+}
+
+/// Compile one terminal Package's chain for one file.
+fn compile_chain(
+    graph: &FGraph,
+    chain: &[(egui_node_graph2::NodeId, egui_node_graph2::NodeId)],
+    input: &Path,
+    info: &ProbeInfo,
+    index: usize,
+    root: Option<&Path>,
+    slot: usize,
 ) -> Result<Job> {
-    let chain = stage_plan(graph)?;
     let total = chain.len();
 
     let mut stages: Vec<Stage> = Vec::new();
@@ -840,7 +904,9 @@ pub fn compile(
                 NodeConfig::Package(c) => c,
                 _ => unreachable!(),
             };
-            intermediate_path(input, index, i, cfg.ext())
+            // `slot` keeps the temp files of two branches apart when they run
+            // for the same file.
+            intermediate_path(input, index, slot * 100 + i, cfg.ext())
         };
 
         let st = compile_stage(graph, *demux, *pkg, &cur_input, &cur_info, &out_path)?;
@@ -877,14 +943,27 @@ pub fn compile(
 
     Ok(Job {
         id: index,
-        input: input.to_path_buf(),
         output,
+        input: input.to_path_buf(),
         args,
         display,
         duration: info.duration,
         notes,
         stages,
     })
+}
+
+/// Compile one file for a single output — the common single-Package case.
+pub fn compile(
+    graph: &FGraph,
+    input: &Path,
+    info: &ProbeInfo,
+    index: usize,
+    root: Option<&Path>,
+) -> Result<Job> {
+    let jobs = compile_all(graph, input, info, index, root)?;
+    let first = jobs.into_iter().next().expect("compile_all returns ≥1 job");
+    Ok(first)
 }
 
 /// Where an intermediate stage writes: a per-batch temp file.
@@ -953,8 +1032,97 @@ fn predict_info(prev: &ProbeInfo, plans: &[StreamPlan], path: &Path) -> ProbeInf
     p
 }
 
-/// Packages → Demuxes, ordered first stage → last stage.
-fn stage_plan(graph: &FGraph) -> Result<Vec<(egui_node_graph2::NodeId, egui_node_graph2::NodeId)>> {
+/// What feeds a Demux once the Conditions in front of it are skipped over.
+struct Routing {
+    /// The Source or Package at the top of this branch, if any.
+    source: Option<egui_node_graph2::NodeId>,
+    /// Conditions between that node and the Demux, with the output port the
+    /// branch left them by — `pass` or `fail`.
+    gates: Vec<(egui_node_graph2::NodeId, String)>,
+}
+
+/// Walk `in` ports upstream from a Demux, through any Condition nodes.
+///
+/// A workflow is allowed to put a Condition *before* the Demux
+/// (Source → Condition → Demux), which routes whole files rather than streams.
+/// The filter-chain walk stops at the Demux, so those gates have to be found
+/// separately: the planner needs the node at the top, and the compiler needs
+/// the gates to decide whether this file takes the branch at all.
+fn routing(graph: &FGraph, demux: egui_node_graph2::NodeId) -> Routing {
+    let mut gates = Vec::new();
+    let mut cur = demux;
+    for _ in 0..16 {
+        let Some(in_port) = graph.nodes[cur]
+            .inputs
+            .iter()
+            .find(|(n, _)| n == "in")
+            .map(|(_, id)| *id)
+        else {
+            break;
+        };
+        let Some(conn) = first_conn(graph, in_port) else {
+            break;
+        };
+        let src = graph.get_output(conn).node;
+        if graph.nodes[src].user_data.kind() != NodeKind::Condition {
+            return Routing {
+                source: Some(src),
+                gates,
+            };
+        }
+        let port = graph.nodes[src]
+            .outputs
+            .iter()
+            .find(|(_, id)| *id == conn)
+            .map(|(n, _)| n.clone())
+            .unwrap_or_default();
+        gates.push((src, port));
+        cur = src;
+    }
+    Routing {
+        source: None,
+        gates,
+    }
+}
+
+/// Reject the file if any gate in front of the Demux sent it elsewhere.
+fn check_gates(graph: &FGraph, demux: egui_node_graph2::NodeId, facts: &FileFacts<'_>) -> Result<()> {
+    for (node, port) in routing(graph, demux).gates {
+        let matches = match &graph.nodes[node].user_data.config {
+            NodeConfig::Condition(c) => c.matches(facts),
+            _ => true,
+        };
+        let open = match port.as_str() {
+            "pass" => matches,
+            "fail" => !matches,
+            _ => true,
+        };
+        if !open {
+            return Err(anyhow::Error::new(Skipped(format!(
+                "condition `{}` sent this file down its other branch",
+                graph.nodes[node]
+                    .user_data
+                    .config
+                    .summary()
+                    .chars()
+                    .take(40)
+                    .collect::<String>(),
+            ))));
+        }
+    }
+    Ok(())
+}
+
+/// Every output of the graph: one chain per terminal Package, first stage →
+/// last stage.
+///
+/// A workflow may end in several Packages — one file can be encoded to mp4 for
+/// the video branch and to wav for the audio branch — so each terminal is
+/// planned separately and becomes its own job. Packages whose `file` output is
+/// wired into something are mid-chain stages, not outputs.
+fn stage_plans(
+    graph: &FGraph,
+) -> Result<Vec<Vec<(egui_node_graph2::NodeId, egui_node_graph2::NodeId)>>> {
     let packages = package_nodes(graph);
     if packages.is_empty() {
         bail!("the workflow has no Package node");
@@ -965,15 +1133,22 @@ fn stage_plan(graph: &FGraph) -> Result<Vec<(egui_node_graph2::NodeId, egui_node
         .copied()
         .filter(|p| !file_output_connected(graph, *p))
         .collect();
-    let mut pkg = match terminals.len() {
-        1 => terminals[0],
-        0 => bail!("every Package node feeds another node — the workflow has no output"),
-        n => bail!(
-            "{} Package nodes have nothing connected after them; a workflow needs exactly one final Package",
-            n
-        ),
-    };
+    if terminals.is_empty() {
+        bail!("every Package node feeds another node — the workflow has no output");
+    }
 
+    let mut plans = Vec::with_capacity(terminals.len());
+    for pkg in terminals {
+        plans.push(stage_chain(graph, pkg)?);
+    }
+    Ok(plans)
+}
+
+/// Walk one Package back through the Demuxes that feed it.
+fn stage_chain(
+    graph: &FGraph,
+    mut pkg: egui_node_graph2::NodeId,
+) -> Result<Vec<(egui_node_graph2::NodeId, egui_node_graph2::NodeId)>> {
     let mut chain = Vec::new();
     for _ in 0..16 {
         let demux = structural_demux(graph, pkg)?;
@@ -989,6 +1164,9 @@ fn stage_plan(graph: &FGraph) -> Result<Vec<(egui_node_graph2::NodeId, egui_node
             bail!("the Demux node has nothing connected to its `in` port");
         };
         let src = graph.get_output(conn).node;
+        // Skip over Conditions: they route files, not streams, and are
+        // evaluated per file when the stage is compiled.
+        let src = routing(graph, demux).source.unwrap_or(src);
         match graph.nodes[src].user_data.kind() {
             NodeKind::Package => pkg = src,
             NodeKind::Source => {
@@ -1068,17 +1246,29 @@ fn structural_demux(graph: &FGraph, pkg: egui_node_graph2::NodeId) -> Result<egu
 }
 
 /// Convenience wrapper used by the preview panel and by `--selftest`.
+///
+/// One entry per file; a file can carry several jobs when the workflow has
+/// more than one terminal Package.
 pub fn compile_batch(
     graph: &FGraph,
     files: &[PathBuf],
     probes: &std::collections::HashMap<String, ProbeInfo>,
     root: Option<&Path>,
-) -> Vec<Result<Job>> {
+) -> Vec<Result<Vec<Job>>> {
+    // Ids have to be unique across the whole batch: a file with two outputs
+    // yields two jobs, and the runner keys its progress events on the id.
+    let mut next_id = 1usize;
     files
         .iter()
         .enumerate()
         .map(|(i, f)| match probes.get(&f.to_string_lossy().to_string()) {
-            Some(info) => compile(graph, f, info, i + 1, root),
+            Some(info) => compile_all(graph, f, info, i + 1, root).map(|mut jobs| {
+                for job in &mut jobs {
+                    job.id = next_id;
+                    next_id += 1;
+                }
+                jobs
+            }),
             None => Err(anyhow::anyhow!("no probe data for {}", f.display())),
         })
         .collect()
@@ -1221,6 +1411,202 @@ mod tests {
         let input = Path::new("/videos/a/clip.mp4");
         let out = render_output_path(&cfg, input, 3, Some(Path::new("/videos")));
         assert_eq!(out, PathBuf::from("/videos/a/clip_fflow.mp4"));
+    }
+
+    // -- several terminal Packages -----------------------------------------
+
+    fn node(id: u64, kind: NodeKind, cfg: serde_json::Value) -> crate::graph::model::WfNode {
+        crate::graph::model::WfNode {
+            id,
+            kind: kind.id().into(),
+            config: cfg,
+            pos: None,
+        }
+    }
+
+    fn edge(from: (u64, &str), to: (u64, &str)) -> crate::graph::model::Edge {
+        crate::graph::model::Edge {
+            from: (from.0, from.1.into()),
+            to: (to.0, to.1.into()),
+        }
+    }
+
+    fn condition(rules: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "label": "", "match_all": true, "rules": rules })
+    }
+
+    fn demux_cfg() -> serde_json::Value {
+        serde_json::json!({
+            "audio_mode": "First", "audio_tracks": [],
+            "subtitle_mode": "Off", "subtitle_tracks": [],
+            "video_mode": "First", "video_tracks": []
+        })
+    }
+
+    fn package_cfg(container: &str) -> serde_json::Value {
+        serde_json::json!({
+            "container": container, "extra_args": "", "metadata": [],
+            "movflags_faststart": true, "name_template": "{dir}/{stem}_fflow.{ext}",
+            "output_dir": "", "shortest": false
+        })
+    }
+
+    /// The workflow from the bug report: one Source feeding two branches, each
+    /// ending in its own Package (mp4 for the video side, wav for the audio
+    /// side). Both branches are gated by a Condition *in front of* the Demux.
+    fn two_branch_workflow(gate_a: serde_json::Value, gate_b: serde_json::Value) -> crate::graph::Workflow {
+        crate::graph::Workflow {
+            version: "1.0".into(),
+            name: "two outputs".into(),
+            nodes: vec![
+                node(
+                    0,
+                    NodeKind::Source,
+                    serde_json::json!({
+                        "extensions": "mp4,mkv", "paths": ["/tmp"], "recursive": true,
+                        "skip_own_outputs": true
+                    }),
+                ),
+                node(1, NodeKind::Condition, gate_a),
+                node(2, NodeKind::Demux, demux_cfg()),
+                node(
+                    3,
+                    NodeKind::VideoEncoder,
+                    serde_json::json!({
+                        "bitrate": "4M", "codec": "libx264", "crf": 23,
+                        "pix_fmt": "yuv420p", "prefer_hardware": false,
+                        "preset": "medium", "use_bitrate": false
+                    }),
+                ),
+                node(4, NodeKind::Package, package_cfg("mp4")),
+                node(5, NodeKind::Condition, gate_b),
+                node(6, NodeKind::Demux, demux_cfg()),
+                node(
+                    7,
+                    NodeKind::AudioEncoder,
+                    serde_json::json!({
+                        "bitrate": "192k", "channels": 2, "codec": "aac",
+                        "sample_rate": 48000
+                    }),
+                ),
+                node(8, NodeKind::Package, package_cfg("wav")),
+            ],
+            edges: vec![
+                edge((0, "file"), (1, "in")),
+                edge((1, "pass"), (2, "in")),
+                edge((2, "video"), (3, "in")),
+                edge((3, "out"), (4, "video")),
+                edge((0, "file"), (5, "in")),
+                edge((5, "pass"), (6, "in")),
+                edge((6, "audio"), (7, "in")),
+                edge((7, "out"), (8, "audio")),
+            ],
+        }
+    }
+
+    fn mp4_gate() -> serde_json::Value {
+        condition(serde_json::json!([
+            { "field": "Extension", "key": "", "op": "Equals", "value": "mp4" }
+        ]))
+    }
+
+    /// Two terminal Packages must each produce a job — this is the case the
+    /// compiler used to reject with "a workflow needs exactly one final
+    /// Package".
+    #[test]
+    fn two_terminal_packages_yield_one_job_each() {
+        // Both gates accept an mp4/h264 file, so both branches are live.
+        let wf = two_branch_workflow(mp4_gate(), mp4_gate());
+        let editor = editor_from(wf);
+        let jobs = compile_all(
+            &editor.graph,
+            Path::new("/tmp/clip.mp4"),
+            &probe(1, 1, 0),
+            1,
+            None,
+        )
+        .expect("both branches compile");
+
+        assert_eq!(jobs.len(), 2, "one job per terminal Package");
+        let mut exts: Vec<String> = jobs
+            .iter()
+            .map(|j| {
+                j.output
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            })
+            .collect();
+        exts.sort();
+        assert_eq!(exts, vec!["mp4", "wav"]);
+    }
+
+    /// A Condition in front of the Demux routes whole files: the file only
+    /// takes the branch whose gate passes.
+    #[test]
+    fn a_condition_before_the_demux_gates_the_branch() {
+        let mkv = condition(serde_json::json!([
+            { "field": "Extension", "key": "", "op": "Equals", "value": "mkv" }
+        ]));
+        let wf = two_branch_workflow(mp4_gate(), mkv);
+        let editor = editor_from(wf);
+
+        // clip.mp4 takes branch A and is turned away from branch B.
+        let jobs = compile_all(
+            &editor.graph,
+            Path::new("/tmp/clip.mp4"),
+            &probe(1, 1, 0),
+            1,
+            None,
+        )
+        .unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].output.ends_with("clip_fflow.mp4"));
+
+        // A webm file matches neither gate: skipped, not failed.
+        let err = compile_all(
+            &editor.graph,
+            Path::new("/tmp/clip.webm"),
+            &probe(1, 1, 0),
+            1,
+            None,
+        )
+        .expect_err("no branch takes a webm file");
+        assert!(
+            skipped_reason(&err).is_some(),
+            "expected a skip, got {:#}",
+            err
+        );
+    }
+
+    /// Two Packages writing the same path is a mistake worth reporting: ffmpeg
+    /// would silently keep whichever finished last.
+    #[test]
+    fn duplicate_output_paths_are_rejected() {
+        let wf = two_branch_workflow(mp4_gate(), mp4_gate());
+        let mut editor = editor_from(wf);
+        // Make branch B write mp4 as well.
+        for (_, n) in editor.graph.nodes.iter_mut() {
+            if n.user_data.json_id == 8 {
+                n.user_data.config = NodeConfig::Package(PackageConfig {
+                    container: "mp4".into(),
+                    ..PackageConfig::default()
+                });
+            }
+        }
+        let err = compile_all(
+            &editor.graph,
+            Path::new("/tmp/clip.mp4"),
+            &probe(1, 1, 0),
+            1,
+            None,
+        )
+        .expect_err("both packages would write clip_fflow.mp4");
+        assert!(
+            format!("{:#}", err).contains("both write"),
+            "unexpected error: {:#}",
+            err
+        );
     }
 
     #[test]

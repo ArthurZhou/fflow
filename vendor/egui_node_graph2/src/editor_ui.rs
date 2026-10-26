@@ -26,6 +26,13 @@ pub type NodeRects = std::collections::HashMap<NodeId, Rect>;
 
 const DISTANCE_TO_CONNECT: f32 = 10.0;
 
+/// Vertical distance between the hooks of one port, in graph units.
+///
+/// fflow patch: 10 was the stock value and left stacked hooks exactly
+/// tangent (radius 5 each); 12 keeps a 2 px gap so two links read as two
+/// dots rather than a figure eight.
+const PORT_STEP: f32 = 12.0;
+
 /// Nodes communicate certain events to the parent graph when drawn. There is
 /// one special `User` variant which can be used by users as the return value
 /// when executing some custom actions in the UI of the node.
@@ -844,8 +851,14 @@ where
                     // grew to four times its natural height when zoomed out.
                     let port_height = port_height * pan_zoom.zoom;
                     let margin = 5.0 * pan_zoom.zoom;
-                    let missing_space =
-                        port_height - (height_intermediate - height_before) + margin;
+                    // The first dot sits on the label's centre line, so the
+                    // space to reserve is whatever the stack below that line
+                    // still needs. Deriving it from the row height instead
+                    // would under-reserve the second link by half a row and
+                    // let the dots overlap the next row.
+                    let label_centre = height_before + (height_intermediate - height_before) / 2.0;
+                    let block_bottom = label_centre + (port_height - 5.0 * pan_zoom.zoom);
+                    let missing_space = block_bottom + margin - height_intermediate;
                     if missing_space > 0.0 {
                         ui.add_space(missing_space);
                     }
@@ -858,9 +871,11 @@ where
                         user_state,
                     );
 
-                    let height_after = ui.min_rect().bottom();
-
-                    input_port_heights.push((height_before + height_after) / 2.0);
+                    // fflow patch: hand the port the *label's* centre, not the
+                    // row's — the row now grows downwards to fit the stacked
+                    // dots, and centring the port in it would drift the first
+                    // dot off the label by half the reserved space.
+                    input_port_heights.push(label_centre);
                 }
             }
 
@@ -907,12 +922,16 @@ where
                 .insert_temp(child_ui.id(), OuterRectMemory(outer_rect))
         });
 
-        fn port_height(wide_port: bool, connections: usize, max_connections: usize) -> f32 {
-            let port_full = connections == max_connections;
+        // fflow patch: a port that takes several links used to be one tall
+        // rounded bar, which read as a different kind of object next to the
+        // round dots everywhere else. It is now a stack of ordinary dots — one
+        // per link — and the *card* grows a 10 px row for each extra link,
+        // the same way a Package card grows when it gains another port.
+        // `max(1)` keeps an empty port exactly as tall as any other port, so
+        // a card's form never depends on whether something is plugged in.
+        fn port_height(wide_port: bool, connections: usize, _max_connections: usize) -> f32 {
             if wide_port {
-                let hooks = connections + if port_full { 0 } else { 1 };
-
-                5.0 + (10.0 * hooks as f32).max(10.0)
+                PORT_STEP * connections.max(1) as f32
             } else {
                 10.0
             }
@@ -941,8 +960,15 @@ where
         {
             let port_type = graph.any_param_type(param_id).unwrap();
 
-            let port_rect = Rect::from_center_size(
-                port_pos,
+            // fflow patch: the rect hangs *below* the first hook instead of
+            // being centred on the row, so the first dot lines up with the
+            // port label and extra links stack downwards into the space the
+            // layout pass reserved for them.
+            let port_rect = Rect::from_min_size(
+                pos2(
+                    port_pos.x - 5.0 * pan_zoom.zoom,
+                    port_pos.y - 5.0 * pan_zoom.zoom,
+                ),
                 egui::vec2(10.0, port_height(wide_port, connections, max_connections))
                     * pan_zoom.zoom,
             );
@@ -955,14 +981,13 @@ where
                 1
             };
 
+            // fflow patch: hooks step straight down from the first one; the
+            // old code derived them from the pill's centre, which put them
+            // half a row off once the pill grew.
             port_locations.insert(
                 param_id,
                 (0..inner_ports)
-                    .map(|k| {
-                        port_rect.center_top()
-                            + Vec2::new(0.0, 5.0 * pan_zoom.zoom)
-                            + Vec2::new(0.0, 10.0 * pan_zoom.zoom) * k as f32
-                    })
+                    .map(|k| pos2(port_pos.x, port_pos.y + PORT_STEP * pan_zoom.zoom * k as f32))
                     .collect(),
             );
 
@@ -987,16 +1012,14 @@ where
                 port_type.data_type_color(user_state)
             };
 
-            if wide_port {
+            // fflow patch: one dot per link, so a wide port looks exactly like
+            // every other port. The spare hook (where a new link would land)
+            // is deliberately not drawn — it stays a drop target only.
+            let dots = if wide_port { connections.max(1) } else { 1 };
+            for k in 0..dots {
+                let centre = pos2(port_pos.x, port_pos.y + PORT_STEP * pan_zoom.zoom * k as f32);
                 ui.painter()
-                    .rect_filled(port_rect, 5.0 * pan_zoom.zoom, port_color);
-            } else {
-                ui.painter().circle(
-                    port_rect.center(),
-                    5.0 * pan_zoom.zoom,
-                    port_color,
-                    Stroke::NONE,
-                );
+                    .circle(centre, 5.0 * pan_zoom.zoom, port_color, Stroke::NONE);
             }
 
             if connections > 0 {

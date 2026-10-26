@@ -147,6 +147,8 @@ fflow --screenshot <out.ppm> [--size 1600x980] [--select N]
 
 编码器与 Package 的输入端是“多入”端口，编译器会为每个文件解析出唯一存活的分支。
 
+**可以有多个 Package。** 每个没有向下游接线的 Package 就是一个输出：一个文件可以同时产出 `_fflow.mp4` 和 `_fflow.wav`，各跑一次 ffmpeg（代价是源文件解码两遍）。Condition 也可以放在 Demux **之前**，用来按文件分流整条支路——这个文件不满足条件时整条支路跳过，不会白跑一次编码。
+
 ---
 
 ## 工作流 JSON
@@ -233,6 +235,7 @@ src/
 - 关闭按钮的 ✕ 描边随 zoom 缩放，不再在小卡片上显得又粗又大
 - 卡片使用主题色 `faint_bg_color` / `text_color`，而不是硬编码的 `#3f3f3f`
 - 连接线是单层贝塞尔（无辉光），宽度由 `theme::WIRE` 通过 `set_wire_width` 注入，并画在卡片下方
+- 多入端口（编码器 `in`、Package 的 `video`/`audio`）不再画成一整条圆角色块，而是每条连线一个圆点、卡片按行增高——和 Package 多一个端口时一样地“长高”，单条连线时与普通端口完全一致
 - 卡片 8 px 圆角、主题发丝描边、柔和投影
 - 卡片矩形通过 `GraphResponse::node_rects` 暴露给应用（选中环、重绘的关闭按钮都依赖它）
 - 移除右键弹出的 node finder（左侧库已经覆盖该功能）
