@@ -58,6 +58,12 @@ pub struct Palette {
     pub video: Color32,
     pub audio: Color32,
     pub file: Color32,
+    /// Wash painted over cards that the flow preview excludes. A single
+    /// translucent colour has to work on both themes: on the light palette it
+    /// is a grey veil (the canvas is already near-white, so veiling with `bg`
+    /// would be invisible), on the dark one it is black, which pushes the card
+    /// *below* the canvas and reads as "out of the way".
+    pub scrim: Color32,
     /// Command-preview syntax colours. All are ≥ 4.5:1 on `code_bg`.
     pub code_flag: Color32,
     pub code_value: Color32,
@@ -90,6 +96,7 @@ impl Palette {
         video: Color32::from_rgb(0xFB, 0x92, 0x3C),
         audio: Color32::from_rgb(0x45, 0xD4, 0x9A),
         file: Color32::from_rgb(0x6C, 0xAE, 0xFF),
+        scrim: Color32::from_rgba_premultiplied(0x00, 0x00, 0x00, 0x73),
         code_flag: Color32::from_rgb(0x8A, 0xB4, 0xFF),
         code_value: Color32::from_rgb(0x7E, 0xE7, 0xD8),
         code_path: Color32::from_rgb(0xB8, 0xE9, 0x86),
@@ -119,6 +126,7 @@ impl Palette {
         video: Color32::from_rgb(0xC2, 0x4C, 0x08),
         audio: Color32::from_rgb(0x10, 0x80, 0x52),
         file: Color32::from_rgb(0x1D, 0x4E, 0xD8),
+        scrim: Color32::from_rgba_premultiplied(0x74, 0x75, 0x77, 0x8C),
         code_flag: Color32::from_rgb(0x1D, 0x4E, 0xD8),
         code_value: Color32::from_rgb(0x0B, 0x6A, 0x66),
         code_path: Color32::from_rgb(0x2F, 0x6F, 0x1A),

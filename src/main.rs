@@ -79,6 +79,13 @@ fn main() -> eframe::Result<()> {
             light: args.iter().any(|a| a == "--light"),
             workflow: arg_value(&args, "--workflow").map(PathBuf::from),
             zoom: arg_value(&args, "--zoom").and_then(|s| s.parse().ok()),
+            // `--flow` takes an optional file index, so it is parsed here
+            // rather than with `arg_value` (which would eat the next flag).
+            flow: args.iter().position(|a| a == "--flow").map(|i| {
+                args.get(i + 1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0usize)
+            }),
         };
         std::process::exit(match shot::render(&opts) {
             Ok(()) => 0,
@@ -96,7 +103,7 @@ fn main() -> eframe::Result<()> {
              fflow --screenshot <out.ppm> [--size 1600x980] [--select N]\n                              \
              [--dir <folder>] [--probe <file>] [--workflow <file>] [--zoom 1.5]\n                              \
              [--no-detect] [--demo-tasks] [--show-help] [--light]\n                              \
-             [--lang en|zh]\n                              \
+             [--flow [N]] [--lang en|zh]\n                              \
              render the UI offscreen (no display required)\n\n\
              Global: --lang en|zh switches the UI language for this run.\n\
              Environment: FFLOW_FFMPEG, FFLOW_FFPROBE override the binaries;\n             \

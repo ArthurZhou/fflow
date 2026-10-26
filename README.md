@@ -16,6 +16,7 @@
 | **双轨处理** | Demux 把文件拆成视频 / 音频两条支路，各自串联滤镜，最后在 Package 汇合 |
 | **17 个滤镜卡片** | 缩放、补边、裁剪、旋转、帧率、调色、3D LUT、锐化、降噪、叠加、音量、响度、频段、变速、声道、重采样、原生滤镜片段 |
 | **条件分支** | Condition 按文件名 / 扩展名 / 尺寸 / 时长 / 编码 / 元数据等字段把每个文件分流到 pass 或 fail 支路 |
+| **流向预览** | 点一个文件就能在画布上看到它实际经过的节点与连线，其余变暗；不运行 ffmpeg 也能验证接线的对错 |
 | **硬件编码** | 启动时探测 ffmpeg 可用编码器，优先使用可用的硬件编码（如 `h264_nvenc`），失败可回退软件 |
 | **实时进度** | 每个任务显示百分比、速度、已用 / 总时长；错误输出可展开、可复制 |
 | **工作流文件** | 存成可读 JSON（含节点坐标），换机器打开布局完全一致 |
@@ -41,7 +42,7 @@ $env:FFLOW_FFPROBE = "D:\tools\ffprobe.exe"
 
 ```powershell
 cargo run --release          # 启动 GUI
-cargo test                   # 89 个测试
+cargo test                   # 96 个测试
 cargo build --release        # 产物：target\release\fflow.exe
 ```
 
@@ -54,12 +55,28 @@ fflow --screenshot <out.ppm> [--size 1600x980] [--select N]
                              [--dir <folder>] [--probe <file>]
                              [--workflow <file>] [--zoom 1.5]
                              [--no-detect] [--demo-tasks] [--light]
-                             [--lang en|zh]
+                             [--flow [N]] [--lang en|zh]
                                        离屏渲染整窗 UI（不需要显示器 / GPU）
 ```
 
 `--lang en|zh` 可加在任何模式前（包括 `--screenshot` 和 `--selftest`），环境变量
 `FFLOW_LANG` 等价。`--screenshot` 是 `shots/` 里所有截图的产生方式，也是改完视觉后最快的验收手段。
+
+### 流向预览
+
+在左下角文件列表里点一个文件，画布立刻回答「这个文件会走到哪」：**不经过的节点和连线全部变暗**，
+左上角的浮层列出每个 Package 的结论——接收它的写明「源文件 › 条件分支 › 解复用 › … › 封装输出」，
+没接收的直接说明是哪个 Condition 把它挡掉了。整个过程不调用 ffmpeg，改一次连线就能看一次。
+
+要点：
+
+- 结论来自 `compiler::trace`，它复用编译器的 `routing` / `check_gates` / `upstream`，不是第二套规则；
+  预览说会写什么，Run 就真的写什么。
+- 条件分支（Condition 在 Demux **前面**）也会被点亮：文件确实从那个节点穿过。
+- `Esc` 或浮层右上角的 ✕ 退出；点浮层里的某一行会选中对应的 Package 节点。
+- 文件还在探测中时不显示预览——Condition 依赖真实时长 / 流布局，用猜测画出来的流向比不画更糟。
+
+`--screenshot --flow [N]` 可以在离屏渲染里直接打开第 N 个文件的流向，用于回归截图。
 
 ### 多语言
 
@@ -93,7 +110,8 @@ fflow --screenshot <out.ppm> [--size 1600x980] [--select N]
 |---|---|
 | 框选 | 在空白画布上拖拽 |
 | 删除选中节点 | `Del` / `Backspace` |
-| 取消选择 | `Esc` |
+| 取消选择 / 退出流向预览 | `Esc` |
+| 查看某文件的流向 | 点文件列表里的文件 |
 | 平移画布 | 中键拖动 |
 | 缩放 | 滚轮 |
 | 断开连线 | 从输入端口向外拖 |
@@ -235,6 +253,9 @@ src/
 - 关闭按钮的 ✕ 描边随 zoom 缩放，不再在小卡片上显得又粗又大
 - 卡片使用主题色 `faint_bg_color` / `text_color`，而不是硬编码的 `#3f3f3f`
 - 连接线是单层贝塞尔（无辉光），宽度由 `theme::WIRE` 通过 `set_wire_width` 注入，并画在卡片下方
+- 连线层可以整层「调暗 / 加重」：`set_flow_highlight` 传一张连线表，表内的保持原色并加粗 1.35 倍，其余降低 alpha。
+  连线画在卡片**后面**，宿主没法事后覆盖，所以流向预览只能从这里入手；调用方在 `draw_graph_editor`
+  之后立刻传 `None`，高亮不会跨帧残留
 - 多入端口（编码器 `in`、Package 的 `video`/`audio`）不再画成一整条圆角色块，而是每条连线一个圆点、卡片按行增高——和 Package 多一个端口时一样地“长高”，单条连线时与普通端口完全一致
 - 卡片 8 px 圆角、主题发丝描边、柔和投影
 - 卡片矩形通过 `GraphResponse::node_rects` 暴露给应用（选中环、重绘的关闭按钮都依赖它）
@@ -253,10 +274,11 @@ src/
 ## 验证
 
 ```powershell
-cargo test                                  # 89 个单元 + 无头 UI 测试
+cargo test                                  # 96 个单元 + 无头 UI 测试
 cargo run -- --selftest testdata            # 真实调用 ffmpeg 的端到端检查
 cargo run -- --screenshot out.ppm           # 整窗离屏渲染
 cargo run -- --screenshot zh.ppm --lang zh  # 中文界面验收（含 CJK 字形）
+cargo run -- --screenshot flow.ppm --flow 0 # 流向预览（第 0 个文件）
 ```
 
 无头测试用 `egui::Context::run` 直接驱动 `draw_all`，因此布局、点击、框选、缩放、拖放都能在没有窗口和 GPU 的机器上回归。

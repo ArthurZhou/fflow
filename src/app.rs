@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use egui_node_graph2::NodeResponse;
 
-use crate::compiler::{self, Job};
+use crate::compiler::{self, Job, Trace};
 use crate::graph::nodes::{self, NodeConfig, NodeKind};
 use crate::graph::model;
 use crate::graph::{self, AllTemplates, FlowResponse, GraphCtx, GraphEditor, Settings, Workflow};
@@ -156,6 +156,9 @@ pub struct FflowApp {
     view_fitted: bool,
     preview_index: usize,
     show_preview: bool,
+    /// Highlight, on the canvas, the nodes and wires the selected file flows
+    /// through. Turned on by picking a file, off again with Esc or the chip's ✕.
+    flow_preview: bool,
     show_help: bool,
     toasts: Vec<Toast>,
     tools_error: Option<String>,
@@ -236,6 +239,7 @@ impl FflowApp {
             view_fitted: false,
             preview_index: 0,
             show_preview: true,
+            flow_preview: false,
             show_help: false,
             toasts: Vec::new(),
             tools_error,
@@ -402,6 +406,15 @@ impl FflowApp {
             self.ctx.probe = Some(info);
         }
         Ok(())
+    }
+
+    /// Turn on the flow preview for the n-th file. Only used by
+    /// `--screenshot --flow`, so the highlight can be captured without a click.
+    pub fn demo_flow(&mut self, index: usize) {
+        if index < self.files.len() {
+            self.preview_index = index;
+        }
+        self.flow_preview = true;
     }
 
     /// Fill the task list with one job per status. Only used by `--screenshot
@@ -604,6 +617,10 @@ impl FflowApp {
         });
         if escape {
             self.editor.selected_nodes.clear();
+            // One Esc means "stop highlighting": the flow preview is a
+            // temporary overlay, and leaving it on with no visible way out
+            // would be a trap.
+            self.flow_preview = false;
         }
         if delete && !self.editor.selected_nodes.is_empty() {
             self.delete_selected();
@@ -795,6 +812,24 @@ impl FflowApp {
     }
 
     // -- compile / run ----------------------------------------------------
+
+    /// What the graph does with the file selected in the sidebar, computed
+    /// without running anything.
+    ///
+    /// Recomputed every frame on purpose: the walk is a few dozen node visits
+    /// with no subprocesses, so a cache would cost more in invalidation bugs
+    /// (an edited Condition, a re-probe, a new file) than it saves. Returns
+    /// `None` while the file is still being probed — Conditions need the real
+    /// duration and stream layout, and a preview based on guesses would be
+    /// worse than no preview.
+    fn flow_trace(&self) -> Option<Trace> {
+        if !self.flow_preview {
+            return None;
+        }
+        let file = self.files.get(self.preview_index)?;
+        let info = self.probes.get(&file.to_string_lossy().to_string())?;
+        Some(compiler::trace(&self.editor.graph, file, info))
+    }
 
     fn compile_current(&self) -> Result<Job, String> {
         let Some(file) = self.files.get(self.preview_index) else {
@@ -1454,6 +1489,9 @@ impl FflowApp {
         theme::fade_bottom(ui, list.inner_rect, 16.0);
         if let Some(i) = pick {
             self.preview_index = i;
+            // Picking a file is a question — "where does this one go?" — so
+            // the answer comes up on the canvas straight away.
+            self.flow_preview = true;
         }
     }
 
@@ -2175,6 +2213,10 @@ impl FflowApp {
 
     fn canvas(&mut self, ctx: &egui::Context) {
         let pal = theme::p();
+        // Resolved before the editor draws: the wire layer has to know which
+        // connections are live *during* the draw, and that layer sits behind
+        // the cards, where the app cannot paint over it afterwards.
+        let flow = self.flow_trace();
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(pal.bg))
             .show(ctx, |ui| {
@@ -2194,9 +2236,17 @@ impl FflowApp {
                     self.editor.pan_zoom.zoom,
                 );
                 let selected_before = self.editor.selected_nodes.clone();
+                egui_node_graph2::set_flow_highlight(
+                    flow.as_ref()
+                        .map(|t| t.links.iter().copied().collect::<Vec<_>>()),
+                );
                 let response = self
                     .editor
                     .draw_graph_editor(ui, AllTemplates, &mut self.ctx, vec![]);
+                // Scoped to the one call above: a preview must never outlive the
+                // frame that asked for it, and the editor is also driven by the
+                // headless tests, which run with no preview at all.
+                egui_node_graph2::set_flow_highlight(None);
                 // Exact painted rects for this frame, before `node_responses`
                 // is consumed below.
                 let node_rects = response.node_rects.clone();
@@ -2283,6 +2333,22 @@ impl FflowApp {
                 &pal,
             );
 
+            // Flow preview: wash out every card the selected file never
+            // reaches, so the live path is the only thing at full contrast.
+            // Painted after the ✕ (a dimmed card dims as a whole) but before
+            // the selection ring, which has to stay legible on a dimmed card.
+            if let Some(t) = &flow {
+                for (node, rect) in &node_rects {
+                    if !t.nodes.contains(node) {
+                        ui.painter().rect_filled(
+                            *rect,
+                            egui::Rounding::same(theme::ROUND_CARD * zoom),
+                            pal.scrim,
+                        );
+                    }
+                }
+            }
+
             // Selection ring, in the accent colour: the library's own outline is
             // `WHITE.lighten(0.8)`, invisible on the light palette.
             //
@@ -2297,6 +2363,10 @@ impl FflowApp {
                         egui::Stroke::new(1.5, pal.accent),
                     );
                 }
+            }
+
+            if let Some(t) = &flow {
+                self.flow_chip(ctx, t);
             }
 
             // Drag a library item onto the canvas.
@@ -2405,6 +2475,149 @@ impl FflowApp {
         });
     }
 
+    /// The flow-preview summary, pinned to the canvas' top-left corner.
+    ///
+    /// The canvas can only show *where* the file goes; this says *why*, which
+    /// is what turns "the branch did not light up" into an answer you can act
+    /// on without running anything.
+    fn flow_chip(&mut self, ctx: &egui::Context, t: &Trace) {
+        let pal = theme::p();
+        let Some(name) = self
+            .files
+            .get(self.preview_index)
+            .map(|f| source::short_name(f).to_string())
+        else {
+            return;
+        };
+        // Anchored to the canvas corner, not to the screen: the chip is sized
+        // by its text, so a fixed offset from the left edge would float
+        // wherever the panel splitter happens to be.
+        let screen = ctx.screen_rect();
+        let inset = egui::vec2(
+            self.canvas_rect.left() - screen.left() + 10.0,
+            self.canvas_rect.top() - screen.top() + 10.0,
+        );
+        let mut dismiss = false;
+        // Clicking a verdict line selects that Package on the canvas: the
+        // question "which one is the .wav output?" then answers itself.
+        let mut focus: Option<egui_node_graph2::NodeId> = None;
+        egui::Area::new(egui::Id::new("flow-chip"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::LEFT_TOP, inset)
+            .show(ctx, |ui| {
+                // The cap goes on the Area's ui, not inside the frame: the
+                // frame sizes itself to its content, so a limit applied inside
+                // it would only clip the last row after the fact.
+                ui.set_max_width(430.0);
+                egui::Frame::none()
+                    .fill(pal.panel)
+                    .rounding(egui::Rounding::same(8.0))
+                    .stroke(egui::Stroke::new(1.0, pal.stroke))
+                    .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                    .show(ui, |ui| {
+                        ui.set_max_width(410.0);
+                        ui.horizontal(|ui| {
+                            let (dot, _) = ui.allocate_exact_size(
+                                egui::vec2(6.0, 6.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().circle_filled(
+                                dot.center(),
+                                3.0,
+                                if t.flows() { pal.ok } else { pal.warn },
+                            );
+                            ui.label(
+                                egui::RichText::new(name)
+                                    .size(theme::BODY)
+                                    .color(pal.text),
+                            );
+                            if t.flows() {
+                                ui.label(
+                                    egui::RichText::new(tr!(
+                                        "{} of {} outputs",
+                                        t.taken().count(),
+                                        t.outputs.len()
+                                    ))
+                                    .size(theme::CAPTION)
+                                    .color(pal.faint),
+                                );
+                            }
+                            theme::right_aligned(ui, |ui| {
+                                if cross_button(ui, pal.dim, pal.text)
+                                    .on_hover_text(tr!("clear the flow preview (Esc)"))
+                                    .clicked()
+                                {
+                                    dismiss = true;
+                                }
+                            });
+                        });
+                        ui.add_space(2.0);
+                        if t.outputs.is_empty() {
+                            ui.label(
+                                egui::RichText::new(tr!("no output takes this file"))
+                                    .size(theme::CAPTION)
+                                    .color(pal.faint),
+                            );
+                        }
+                        for o in &t.outputs {
+                            ui.horizontal(|ui| {
+                                let (mark, col) = if o.taken {
+                                    (true, pal.ok)
+                                } else {
+                                    (false, pal.warn)
+                                };
+                                let (dot, _) = ui.allocate_exact_size(
+                                    egui::vec2(12.0, 12.0),
+                                    egui::Sense::hover(),
+                                );
+                                paint_mark(ui.painter(), dot.center(), mark, col);
+                                let target = if o.target.is_empty() {
+                                    "—".to_string()
+                                } else {
+                                    format!(".{}", o.target)
+                                };
+                                ui.label(
+                                    egui::RichText::new(target)
+                                        .size(theme::CAPTION)
+                                        .color(if o.taken { pal.dim } else { pal.faint }),
+                                );
+                                // Taken: the path the file travels. Skipped:
+                                // the Condition that turned it away.
+                                let detail = match (o.taken, &o.reason) {
+                                    (true, _) => o.path.join(" › "),
+                                    (false, Some(why)) => why.clone(),
+                                    (false, None) => tr!("no output takes this file").to_string(),
+                                };
+                                let line = ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(detail.clone())
+                                            .size(theme::CAPTION)
+                                            .color(pal.faint),
+                                    )
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                                );
+                                // A long path or a long Condition summary is
+                                // truncated to keep the chip narrow; the full
+                                // text is one hover away.
+                                let line = line.on_hover_text(detail);
+                                if line.clicked() {
+                                    focus = Some(o.package);
+                                }
+                            });
+                        }
+                    });
+            });
+        if dismiss {
+            self.flow_preview = false;
+        }
+        if let Some(node) = focus {
+            if self.editor.graph.nodes.get(node).is_some() {
+                self.editor.selected_nodes = vec![node];
+            }
+        }
+    }
+
     fn help_window(&mut self, ctx: &egui::Context) {
         if !self.show_help {
             return;
@@ -2423,6 +2636,11 @@ impl FflowApp {
                     ui.label(egui::RichText::new(tr!("Ports")).strong());
                     ui.label(tr!(
                         "Blue = File, orange = Video, green = Audio. Connections between different port types are refused immediately."
+                    ));
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(tr!("Flow preview")).strong());
+                    ui.label(tr!(
+                        "Click a file in the file list: every node and connection it does not reach is dimmed, and the chip names the outputs it does reach — or the Condition that turned it away. No ffmpeg run needed. Esc clears it."
                     ));
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new(tr!("Shortcuts")).strong());
@@ -2651,6 +2869,57 @@ fn category_header(ui: &mut egui::Ui, title: &str, count: usize, open: bool) -> 
     }
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
+}
+
+/// A tick or a cross, painted as two strokes.
+///
+/// Not text: the UI fonts are picked at runtime (Inter / Segoe UI / Ubuntu) and
+/// none of them is guaranteed to carry ✓ or ✗, so a verdict line rendered as
+/// text turns into a tofu box — which reads as "unknown" exactly where the
+/// answer matters.
+fn paint_mark(painter: &egui::Painter, centre: egui::Pos2, taken: bool, color: egui::Color32) {
+    let s = egui::Stroke::new(1.5, color);
+    if taken {
+        painter.line_segment(
+            [
+                centre + egui::vec2(-3.6, 0.2),
+                centre + egui::vec2(-1.0, 3.0),
+            ],
+            s,
+        );
+        painter.line_segment(
+            [
+                centre + egui::vec2(-1.0, 3.0),
+                centre + egui::vec2(3.8, -3.0),
+            ],
+            s,
+        );
+    } else {
+        painter.line_segment(
+            [
+                centre + egui::vec2(-3.0, -3.0),
+                centre + egui::vec2(3.0, 3.0),
+            ],
+            s,
+        );
+        painter.line_segment(
+            [
+                centre + egui::vec2(3.0, -3.0),
+                centre + egui::vec2(-3.0, 3.0),
+            ],
+            s,
+        );
+    }
+}
+
+/// A small ✕, painted rather than typed (see [`paint_mark`]).
+fn cross_button(ui: &mut egui::Ui, idle: egui::Color32, hot: egui::Color32) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let color = if resp.hovered() { hot } else { idle };
+        paint_mark(ui.painter(), rect.center(), false, color);
     }
     resp
 }
@@ -3708,6 +3977,51 @@ mod tests {
         h.click(card.center());
         h.frame(Vec::new());
         assert_eq!(h.app.preview_index, 1);
+    }
+
+    /// Picking a file is a question — "where does this one go?" — so the flow
+    /// preview comes up with it, and one Esc puts it away again.
+    #[test]
+    fn picking_a_file_starts_the_flow_preview() {
+        let mut h = Harness::new();
+        h.app.files = vec![PathBuf::from("Z:/a.mp4"), PathBuf::from("Z:/b.mp4")];
+        // A hand-built probe keeps the test off ffprobe: `ensure_probes` skips
+        // anything already in the map.
+        for f in h.app.files.clone() {
+            h.app.probes.insert(
+                f.to_string_lossy().to_string(),
+                ProbeInfo {
+                    has_video: true,
+                    has_audio: true,
+                    duration: 1.0,
+                    ..Default::default()
+                },
+            );
+        }
+        assert!(h.app.flow_trace().is_none(), "off until a file is picked");
+
+        h.frame(Vec::new());
+        let card = h
+            .ctx
+            .read_response(file_card_id(1))
+            .expect("file card was not drawn")
+            .rect;
+        h.click(card.center());
+        h.frame(Vec::new());
+
+        assert_eq!(h.app.preview_index, 1);
+        assert!(h.app.flow_preview, "clicking a file should show its flow");
+        // The default workflow is fully wired, so the trace has to reach the
+        // Package rather than stopping at the Source.
+        let t = h.app.flow_trace().expect("a trace for the picked file");
+        assert!(t.flows(), "the default workflow writes every file somewhere");
+        assert!(!t.nodes.is_empty());
+
+        // Esc is the way out, and it must not take the node selection with it
+        // in the sense of leaving the preview on.
+        h.key(egui::Key::Escape);
+        assert!(!h.app.flow_preview, "Esc should clear the flow preview");
+        assert!(h.app.flow_trace().is_none());
     }
 
     /// A file ffprobe cannot open must not be re-probed on every frame, and

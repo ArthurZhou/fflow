@@ -259,6 +259,8 @@ pub struct Options {
     /// Canvas zoom to render at (1.0 = default). Used to check that cards keep
     /// their proportions when the canvas is scaled.
     pub zoom: Option<f32>,
+    /// Turn on the flow preview for the n-th file, as if it had been clicked.
+    pub flow: Option<usize>,
 }
 
 /// Run one UI frame and tessellate it.
@@ -293,6 +295,9 @@ pub fn render(opts: &Options) -> anyhow::Result<()> {
         app.demo_load_workflow(wf)?;
     }
     app.demo_setup(opts.dir.as_deref(), opts.probe.as_deref())?;
+    if let Some(i) = opts.flow {
+        app.demo_flow(i);
+    }
     if opts.demo_tasks {
         app.demo_tasks();
     }

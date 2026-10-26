@@ -264,6 +264,20 @@ const ZH: &[(&str, &str)] = &[
     ("connection rejected: {} » {} (type mismatch)", "连接被拒绝：{} » {}（类型不匹配）"),
     ("connection rejected: this would create a cycle", "连接被拒绝：这会形成循环"),
     ("removed invalid connection: {}", "已移除无效连接：{}"),
+    // -- flow preview ------------------------------------------------------
+    ("no output takes this file", "没有任何输出会接收这个文件"),
+    ("clear the flow preview (Esc)", "清除流向预览（Esc）"),
+    ("Flow preview", "流向预览"),
+    (
+        "Click a file in the file list: every node and connection it does not reach is dimmed, and the chip names the outputs it does reach — or the Condition that turned it away. No ffmpeg run needed. Esc clears it.",
+        "在文件列表里点一个文件：它不会经过的节点和连线都会变暗，左上角的浮层会列出它真正写出的输出，或者说明是哪个条件把它挡掉了。不需要运行 ffmpeg。按 Esc 退出。",
+    ),
+    ("{} output(s)", "{} 个输出"),
+    ("{} of {} outputs", "{} / {} 个输出"),
+    ("nothing connected to this Package", "该封装节点没有接任何输入"),
+    ("condition `{}` sent this file down its other branch", "条件 `{}` 把这个文件送到了另一条分支"),
+    ("the Package node is not connected to a Demux — add one between the source and the encoders",
+     "封装节点没有连接到解复用节点 — 请在源和编码器之间加一个"),
     // -- help --------------------------------------------------------------
     ("fflow — how it works", "fflow — 使用说明"),
     ("Pipeline", "流程"),

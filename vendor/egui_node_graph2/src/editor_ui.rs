@@ -428,21 +428,37 @@ where
 
         // draw existing connections
         let mut wires: Vec<Shape> = Vec::new();
+        // Snapshot the preview once: the set is consulted per wire, and a
+        // `RefCell` borrow per wire would be both slower and a panic risk if
+        // anything below ever re-enters.
+        let flow = flow_highlight();
         for (input, outputs) in self.graph.iter_connection_groups() {
             for (hook_n, &output) in outputs.iter().enumerate() {
                 let port_type = self
                     .graph
                     .any_param_type(AnyParameterId::Output(output))
                     .unwrap();
-                let connection_color = port_type.data_type_color(user_state);
+                let mut connection_color = port_type.data_type_color(user_state);
                 // outputs can't be wide yet so this is fine.
                 let src_pos = port_locations[&AnyParameterId::Output(output)][0];
                 let dst_pos = conn_locations[&input][hook_n];
+                let mut width_mul = 1.0;
+                if let Some(links) = &flow {
+                    if links.contains(&(output, input)) {
+                        // Emphasised: a touch heavier than the idle weight so
+                        // the live path reads as one continuous stroke even
+                        // where it crosses a faded one.
+                        width_mul = 1.35;
+                    } else {
+                        connection_color = fade(connection_color, 0.18);
+                    }
+                }
                 wires.push(connection_shape(
                     &self.pan_zoom,
                     src_pos,
                     dst_pos,
                     connection_color,
+                    width_mul,
                 ));
             }
         }
@@ -633,6 +649,42 @@ pub fn wire_width() -> f32 {
     f32::from_bits(WIRE_WIDTH.load(std::sync::atomic::Ordering::Relaxed))
 }
 
+thread_local! {
+    /// Connections to keep at full strength; every other wire is faded.
+    ///
+    /// fflow patch: the flow preview needs the wires themselves dimmed, and
+    /// the wire layer is painted into a reserved shape index *behind* the
+    /// cards, so the host cannot overlay them afterwards. `None` means "no
+    /// preview is running" and leaves every wire alone.
+    static FLOW_LINKS: std::cell::RefCell<Option<Vec<(OutputId, InputId)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Emphasise these connections and fade the rest; `None` clears the preview.
+///
+/// Scoped to one `draw_graph_editor` call — the host is expected to set it
+/// before the call and pass `None` straight after, so a preview can never
+/// outlive the frame that asked for it.
+pub fn set_flow_highlight(links: Option<Vec<(OutputId, InputId)>>) {
+    FLOW_LINKS.with(|l| *l.borrow_mut() = links);
+}
+
+fn flow_highlight() -> Option<Vec<(OutputId, InputId)>> {
+    FLOW_LINKS.with(|l| l.borrow().clone())
+}
+
+/// Drop a colour's alpha, so it fades toward whatever is painted underneath
+/// (the grid, the canvas) instead of darkening toward black — the palette the
+/// host paints is not known here, and a preview has to work in both themes.
+fn fade(color: Color32, factor: f32) -> Color32 {
+    Color32::from_rgba_unmultiplied(
+        color.r(),
+        color.g(),
+        color.b(),
+        (color.a() as f32 * factor.clamp(0.0, 1.0)) as u8,
+    )
+}
+
 fn draw_connection(
     pan_zoom: &PanZoom,
     painter: &Painter,
@@ -640,12 +692,18 @@ fn draw_connection(
     dst_pos: Pos2,
     color: Color32,
 ) {
-    painter.add(connection_shape(pan_zoom, src_pos, dst_pos, color));
+    painter.add(connection_shape(pan_zoom, src_pos, dst_pos, color, 1.0));
 }
 
 /// The bezier for one connection, as a shape the caller can put wherever it
 /// wants in the paint order (see the wire placeholder in the editor).
-fn connection_shape(pan_zoom: &PanZoom, src_pos: Pos2, dst_pos: Pos2, color: Color32) -> Shape {
+fn connection_shape(
+    pan_zoom: &PanZoom,
+    src_pos: Pos2,
+    dst_pos: Pos2,
+    color: Color32,
+    width_mul: f32,
+) -> Shape {
     // fflow patch: the stock 5 px opaque line reads as a hand-drawn marker.
     // A single flat stroke instead: no glow, no halo. The stacked low-alpha
     // layers only added a fuzzy edge at this width, and a clean line keeps
@@ -662,7 +720,7 @@ fn connection_shape(pan_zoom: &PanZoom, src_pos: Pos2, dst_pos: Pos2, color: Col
         false,
         Color32::TRANSPARENT,
         egui::Stroke {
-            width: (wire_width() * pan_zoom.zoom).max(1.25),
+            width: (wire_width() * pan_zoom.zoom * width_mul).max(1.25),
             color,
         },
     ))
